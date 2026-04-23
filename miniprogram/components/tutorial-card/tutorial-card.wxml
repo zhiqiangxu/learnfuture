@@ -1,0 +1,27 @@
+<!-- 教学知识卡片弹窗组件 -->
+<view class="overlay" wx:if="{{show}}" bindtap="onClose">
+  <view class="card" catchtap="">
+    <view class="card-header">
+      <text class="card-title">📖 {{tutorial.title}}</text>
+      <view class="close-btn" bindtap="onClose">×</view>
+    </view>
+
+    <view class="card-body">
+      <text class="content">{{tutorial.content}}</text>
+
+      <view class="formula-box" wx:if="{{tutorial.formula}}">
+        <text class="formula-label">公式</text>
+        <text class="formula">{{tutorial.formula}}</text>
+      </view>
+
+      <view class="example-box" wx:if="{{tutorial.example}}">
+        <text class="example-label">示例</text>
+        <text class="example">{{tutorial.example}}</text>
+      </view>
+    </view>
+
+    <view class="card-footer">
+      <button class="got-it-btn" bindtap="onGotIt">我知道了</button>
+    </view>
+  </view>
+</view>

@@ -1,0 +1,82 @@
+<view class="container">
+  <view class="card" wx:if="{{positions.length === 0}}">
+    <text class="text-muted">暂无持仓</text>
+  </view>
+
+  <view class="card pos-card" wx:for="{{positions}}" wx:key="id">
+    <view class="pos-header">
+      <view>
+        <text class="text-bold">BTC/USDT</text>
+        <text class="side-badge {{item.side === 1 ? 'bg-up' : 'bg-down'}}">
+          {{item.side === 1 ? '多' : '空'}} {{item.leverage}}x
+        </text>
+      </view>
+      <view class="adl-indicator">
+        <text class="text-muted text-sm">ADL</text>
+        <view class="adl-dots">
+          <view wx:for="{{5}}" wx:for-item="dot" wx:key="*this"
+                class="dot {{dot < item.adl_indicator ? 'active' : ''}}"></view>
+        </view>
+      </view>
+    </view>
+
+    <!-- PnL -->
+    <view class="pnl-row">
+      <view class="pnl-main">
+        <text class="text-muted text-sm">未实现盈亏</text>
+        <text class="pnl-value {{parseFloat(item.unrealized_pnl) >= 0 ? 'color-up' : 'color-down'}}">
+          {{item.unrealized_pnl}} USDT
+        </text>
+      </view>
+      <view class="pnl-roi">
+        <text class="text-muted text-sm">收益率</text>
+        <text class="{{parseFloat(item.roi) >= 0 ? 'color-up' : 'color-down'}}">{{item.roi}}%</text>
+      </view>
+    </view>
+
+    <!-- 保证金率进度条 -->
+    <view class="margin-ratio-bar">
+      <text class="text-muted text-sm">保证金率 {{item.margin_ratio}}</text>
+      <view class="bar-bg">
+        <view class="bar-fill {{marginRatioColor(item.margin_ratio)}}"
+              style="width: {{Math.min(parseFloat(item.margin_ratio) * 100, 100)}}%"></view>
+      </view>
+    </view>
+
+    <!-- 详细信息 -->
+    <view class="pos-details">
+      <view class="detail-row">
+        <text class="text-muted">开仓价</text><text>{{item.entry_price}}</text>
+      </view>
+      <view class="detail-row">
+        <text class="text-muted">数量</text><text>{{item.quantity}} BTC</text>
+      </view>
+      <view class="detail-row">
+        <text class="text-muted">保证金</text><text>{{item.margin}} USDT</text>
+      </view>
+      <view class="detail-row">
+        <text class="text-muted">强平价</text><text class="color-down">{{item.liq_price}}</text>
+      </view>
+      <view class="detail-row">
+        <text class="text-muted">强盈价</text><text class="color-up">{{item.force_tp_price}}</text>
+      </view>
+      <view class="detail-row" wx:if="{{item.take_profit}}">
+        <text class="text-muted">止盈</text><text>{{item.take_profit}}</text>
+      </view>
+      <view class="detail-row" wx:if="{{item.stop_loss}}">
+        <text class="text-muted">止损</text><text>{{item.stop_loss}}</text>
+      </view>
+      <view class="detail-row">
+        <text class="text-muted">资金费</text><text>{{item.funding_pnl}} USDT</text>
+      </view>
+    </view>
+
+    <!-- 操作按钮 -->
+    <view class="pos-actions">
+      <button class="btn-default" size="mini" bindtap="editTPSL" data-id="{{item.id}}">止盈止损</button>
+      <button class="btn-close" size="mini" bindtap="closePosition" data-id="{{item.id}}">平仓</button>
+    </view>
+  </view>
+</view>
+
+<tutorial-card show="{{showTutorial}}" tutorial="{{tutorialData}}" bind:close="closeTutorial" />

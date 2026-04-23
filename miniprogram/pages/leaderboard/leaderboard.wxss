@@ -1,0 +1,9 @@
+.tabs { display: flex; margin-bottom: 20rpx; }
+.tab { flex: 1; text-align: center; padding: 16rpx; color: #999; font-size: 28rpx; }
+.tab.active { color: #00d4aa; border-bottom: 4rpx solid #00d4aa; }
+.my-rank { border: 1rpx solid #00d4aa; }
+.rank-item { display: flex; align-items: center; gap: 20rpx; }
+.rank-num { width: 60rpx; text-align: center; font-weight: bold; color: #999; }
+.rank-num.top3 { color: #ff9800; font-size: 32rpx; }
+.rank-info { flex: 1; }
+.rank-value { font-weight: bold; }

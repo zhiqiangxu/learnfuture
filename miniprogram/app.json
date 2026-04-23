@@ -1,0 +1,46 @@
+{
+  "pages": [
+    "pages/market/market",
+    "pages/trade/trade",
+    "pages/position/position",
+    "pages/history/history",
+    "pages/profile/profile",
+    "pages/leaderboard/leaderboard"
+  ],
+  "window": {
+    "navigationBarBackgroundColor": "#1a1a2e",
+    "navigationBarTitleText": "合约模拟学习",
+    "navigationBarTextStyle": "white",
+    "backgroundColor": "#0f0f23",
+    "backgroundTextStyle": "light"
+  },
+  "tabBar": {
+    "color": "#666",
+    "selectedColor": "#00d4aa",
+    "backgroundColor": "#1a1a2e",
+    "borderStyle": "black",
+    "list": [
+      {
+        "pagePath": "pages/market/market",
+        "text": "行情"
+      },
+      {
+        "pagePath": "pages/trade/trade",
+        "text": "交易"
+      },
+      {
+        "pagePath": "pages/position/position",
+        "text": "持仓"
+      },
+      {
+        "pagePath": "pages/history/history",
+        "text": "历史"
+      },
+      {
+        "pagePath": "pages/profile/profile",
+        "text": "我的"
+      }
+    ]
+  },
+  "sitemapLocation": "sitemap.json"
+}

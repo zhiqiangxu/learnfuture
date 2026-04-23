@@ -1,0 +1,9 @@
+.balance-label { color: #999; font-size: 26rpx; }
+.balance-value { font-size: 56rpx; font-weight: bold; color: #fff; }
+.stat { display: flex; flex-direction: column; gap: 4rpx; }
+.progress-bar { height: 12rpx; background: #2a2a4a; border-radius: 6rpx; overflow: hidden; }
+.progress-fill { height: 100%; background: linear-gradient(90deg, #00d4aa, #00b894); border-radius: 6rpx; transition: width 0.5s; }
+.progress-pct { text-align: right; font-size: 24rpx; color: #00d4aa; margin-top: 8rpx; }
+.menu-list { padding: 0; }
+.menu-item { display: flex; justify-content: space-between; padding: 24rpx; }
+.disclaimer { text-align: center; margin-top: 40rpx; padding: 20rpx; }

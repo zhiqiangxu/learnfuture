@@ -1,0 +1,107 @@
+<!-- 交易页 -->
+<view class="container">
+  <!-- 实时价格 -->
+  <view class="price-bar">
+    <text class="text-muted">BTC/USDT</text>
+    <text class="price {{priceDir}}">{{price}}</text>
+  </view>
+
+  <!-- 多空切换 -->
+  <view class="side-tabs">
+    <view class="side-tab {{side === 1 ? 'active-long' : ''}}" bindtap="setSide" data-side="1">开多 (看涨)</view>
+    <view class="side-tab {{side === -1 ? 'active-short' : ''}}" bindtap="setSide" data-side="-1">开空 (看跌)</view>
+  </view>
+
+  <!-- 订单类型 -->
+  <view class="type-tabs">
+    <view class="type-tab {{orderType === 1 ? 'active' : ''}}" bindtap="setOrderType" data-type="1">市价</view>
+    <view class="type-tab {{orderType === 2 ? 'active' : ''}}" bindtap="setOrderType" data-type="2">限价</view>
+  </view>
+
+  <!-- 限价输入 (仅限价单) -->
+  <view class="input-group" wx:if="{{orderType === 2}}">
+    <text class="input-label">限价 (USDT)</text>
+    <input type="digit" class="input-field" placeholder="输入限价" value="{{limitPrice}}" bindinput="onLimitPrice" />
+  </view>
+
+  <!-- 杠杆滑块 -->
+  <view class="card">
+    <view class="flex-between">
+      <text>杠杆倍数</text>
+      <text class="text-bold">{{leverage}}x</text>
+    </view>
+    <slider min="1" max="125" value="{{leverage}}" bindchange="onLeverage"
+            activeColor="#00d4aa" block-size="20" />
+    <view class="lever-presets">
+      <view wx:for="{{[1,5,10,20,50,100]}}'" wx:key="*this"
+            class="preset {{leverage === item ? 'active' : ''}}"
+            bindtap="setLeverage" data-lev="{{item}}">{{item}}x</view>
+    </view>
+  </view>
+
+  <!-- 保证金输入 -->
+  <view class="input-group">
+    <view class="flex-between">
+      <text class="input-label">保证金 (USDT)</text>
+      <text class="text-muted text-sm">可用: {{available}}</text>
+    </view>
+    <input type="digit" class="input-field" placeholder="输入保证金金额" value="{{margin}}" bindinput="onMargin" />
+    <view class="margin-presets">
+      <view wx:for="{{['25%','50%','75%','100%']}}" wx:key="*this"
+            class="preset" bindtap="setMarginPct" data-pct="{{item}}">{{item}}</view>
+    </view>
+  </view>
+
+  <!-- 止盈止损 -->
+  <view class="card" wx:if="{{showTPSL}}">
+    <view class="input-group">
+      <text class="input-label">止盈价 (USDT)</text>
+      <input type="digit" class="input-field" placeholder="选填" value="{{takeProfit}}" bindinput="onTP" />
+    </view>
+    <view class="input-group">
+      <text class="input-label">止损价 (USDT)</text>
+      <input type="digit" class="input-field" placeholder="选填" value="{{stopLoss}}" bindinput="onSL" />
+    </view>
+  </view>
+  <view class="tpsl-toggle" bindtap="toggleTPSL">
+    <text class="text-muted text-sm">{{showTPSL ? '收起' : '设置止盈止损 ▸'}}</text>
+  </view>
+
+  <!-- 计算详情 (教学用) -->
+  <view class="card calc-detail" wx:if="{{showCalcDetail && margin > 0}}">
+    <view class="calc-title" bindtap="toggleCalcDetail">
+      <text class="text-sm">📐 计算详情</text>
+      <text class="text-muted text-sm">{{showCalcExpand ? '▾' : '▸'}}</text>
+    </view>
+    <view wx:if="{{showCalcExpand}}">
+      <view class="calc-row">
+        <text class="text-muted">仓位价值</text>
+        <text>{{margin}} × {{leverage}} = {{positionValue}} USDT</text>
+      </view>
+      <view class="calc-row">
+        <text class="text-muted">开仓数量</text>
+        <text>{{positionValue}} / {{price}} = {{quantity}} BTC</text>
+      </view>
+      <view class="calc-row">
+        <text class="text-muted">手续费</text>
+        <text>{{positionValue}} × {{feeRateDisplay}} = {{fee}} USDT</text>
+      </view>
+      <view class="calc-row">
+        <text class="text-muted">强平价</text>
+        <text class="color-down">{{liqPrice}}</text>
+      </view>
+      <view class="calc-row">
+        <text class="text-muted">强盈价</text>
+        <text class="color-up">{{forceTpPrice}}</text>
+      </view>
+    </view>
+  </view>
+
+  <!-- 下单按钮 -->
+  <button class="{{side === 1 ? 'btn-long' : 'btn-short'}} submit-btn"
+          bindtap="placeOrder" disabled="{{submitting}}">
+    {{submitting ? '下单中...' : (side === 1 ? '开多 买入/做多' : '开空 卖出/做空')}}
+  </button>
+</view>
+
+<tutorial-card show="{{showTutorial}}" tutorial="{{tutorialData}}" bind:close="closeTutorial" />

@@ -1,0 +1,66 @@
+.price-card .symbol {
+  font-size: 28rpx;
+  color: #999;
+}
+
+.price-card .price {
+  font-size: 56rpx;
+  font-weight: bold;
+  margin: 8rpx 0;
+}
+
+.price-card .price.color-up { color: #00d4aa; }
+.price-card .price.color-down { color: #ff4d6a; }
+
+.stat {
+  display: flex;
+  flex-direction: column;
+  gap: 4rpx;
+}
+
+.interval-tabs {
+  display: flex;
+  gap: 12rpx;
+  margin-bottom: 16rpx;
+  flex-wrap: wrap;
+}
+
+.tab {
+  padding: 8rpx 20rpx;
+  border-radius: 8rpx;
+  background: #0f0f23;
+  color: #999;
+  font-size: 24rpx;
+}
+
+.tab.active {
+  background: #00d4aa;
+  color: #fff;
+}
+
+.kline-area {
+  height: 500rpx;
+  background: #0f0f23;
+  border-radius: 8rpx;
+}
+
+.kline-placeholder {
+  height: 100%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.trade-buttons {
+  display: flex;
+  gap: 20rpx;
+  margin-top: 20rpx;
+}
+
+.trade-buttons .btn-long,
+.trade-buttons .btn-short {
+  flex: 1;
+  text-align: center;
+}
+
+.ml-10 { margin-left: 10rpx; }

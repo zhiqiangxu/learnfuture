@@ -1,0 +1,18 @@
+.pos-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16rpx; }
+.side-badge { padding: 4rpx 12rpx; border-radius: 6rpx; color: #fff; font-size: 22rpx; margin-left: 12rpx; }
+.adl-indicator { display: flex; align-items: center; gap: 8rpx; }
+.adl-dots { display: flex; gap: 4rpx; }
+.dot { width: 10rpx; height: 24rpx; background: #2a2a4a; border-radius: 2rpx; }
+.dot.active { background: #ff9800; }
+.pnl-row { display: flex; justify-content: space-between; margin-bottom: 16rpx; }
+.pnl-main .pnl-value { font-size: 36rpx; font-weight: bold; display: block; }
+.margin-ratio-bar { margin-bottom: 16rpx; }
+.bar-bg { height: 8rpx; background: #2a2a4a; border-radius: 4rpx; margin-top: 8rpx; }
+.bar-fill { height: 100%; border-radius: 4rpx; transition: width 0.3s; }
+.bar-fill.green { background: #00d4aa; }
+.bar-fill.yellow { background: #ff9800; }
+.bar-fill.red { background: #ff4d6a; }
+.pos-details { margin-bottom: 16rpx; }
+.detail-row { display: flex; justify-content: space-between; padding: 6rpx 0; font-size: 26rpx; }
+.pos-actions { display: flex; gap: 16rpx; justify-content: flex-end; }
+.btn-close { background: #ff4d6a; color: #fff; border: none; border-radius: 8rpx; }

@@ -1,0 +1,42 @@
+Name: learn-future
+Host: 0.0.0.0
+Port: 8888
+
+# PostgreSQL
+Postgres:
+  DataSource: "host=localhost port=5432 user=postgres password=postgres dbname=learn_future sslmode=disable"
+
+# JWT
+JWT:
+  Secret: "learn-future-jwt-secret-change-in-production"
+  Expire: 86400       # 24h
+  RefreshExpire: 604800  # 7d
+
+# 微信小程序
+WeChat:
+  AppID: "wx_app_id_here"
+  AppSecret: "wx_app_secret_here"
+
+# 价格源 (内部配置，前端不可见)
+PriceFeed:
+  WsURL: "wss://fstream.binance.com/ws/btcusdt@trade"  # 合约成交流 (futures)
+  SpotURL: "https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT"  # 现货价格 (spot, 作为指数价格)
+  ReconnectBaseDelay: 1   # 秒
+  ReconnectMaxDelay: 60
+  PingInterval: 30
+  PongTimeout: 10
+  PublishInterval: 200    # 毫秒, 推送给客户端的批量间隔
+
+# 交易参数
+Trading:
+  FeeRate: "0.0004"          # 0.04%
+  MaintenanceMarginRate: "0.005"  # 0.5%
+  MaxLeverage: 125
+  MinMargin: "1"             # 最小保证金 1 USDT
+  InitialBalance: "10000"    # 初始余额
+  ForceTpROI: "5"            # 强盈收益率 500%
+
+# 资金费率
+Funding:
+  SettleHours: [0, 8, 16]    # UTC 小时
+  FetchURL: "https://fapi.binance.com/fapi/v1/premiumIndex?symbol=BTCUSDT"

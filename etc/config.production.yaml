@@ -1,0 +1,40 @@
+# 生产环境配置模板
+# 复制为 config.yaml 并填入真实值
+
+Name: learn-future
+Host: 0.0.0.0
+Port: 8888
+
+Postgres:
+  DataSource: "host=postgres port=5432 user=learn_future password=CHANGE_ME dbname=learn_future sslmode=require"
+
+JWT:
+  Secret: "CHANGE_ME_TO_RANDOM_STRING_AT_LEAST_32_CHARS"
+  Expire: 86400
+  RefreshExpire: 604800
+
+WeChat:
+  AppID: "wx_your_real_appid"
+  AppSecret: "your_real_app_secret"
+
+PriceFeed:
+  WsURL: "wss://fstream.binance.com/ws/btcusdt@trade"
+  SpotURL: "https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT"
+  ReconnectBaseDelay: 1
+  ReconnectMaxDelay: 60
+  PingInterval: 30
+  PongTimeout: 10
+  PublishInterval: 200
+
+Trading:
+  FeeRate: "0.0004"
+  MaintenanceMarginRate: "0.005"
+  MaxLeverage: 125
+  MinMargin: "1"
+  InitialBalance: "10000"
+  ForceTpROI: "5"
+  WALPath: "/data/matching.wal"
+
+Funding:
+  SettleHours: [0, 8, 16]
+  FetchURL: "https://fapi.binance.com/fapi/v1/premiumIndex?symbol=BTCUSDT"

@@ -1,0 +1,67 @@
+<view class="container">
+  <view class="tabs">
+    <view class="tab {{tab === 'orders' ? 'active' : ''}}" bindtap="switchTab" data-tab="orders">订单</view>
+    <view class="tab {{tab === 'trades' ? 'active' : ''}}" bindtap="switchTab" data-tab="trades">成交</view>
+    <view class="tab {{tab === 'funding' ? 'active' : ''}}" bindtap="switchTab" data-tab="funding">资金费</view>
+    <view class="tab {{tab === 'pnl' ? 'active' : ''}}" bindtap="switchTab" data-tab="pnl">盈亏</view>
+  </view>
+
+  <!-- 订单列表 -->
+  <block wx:if="{{tab === 'orders'}}">
+    <view class="card" wx:for="{{orders}}" wx:key="id">
+      <view class="flex-between">
+        <text class="{{item.side === 1 ? 'color-up' : 'color-down'}} text-bold">
+          {{item.side === 1 ? '多' : '空'}} {{item.leverage}}x
+        </text>
+        <text class="text-muted text-sm">{{item.status_text}}</text>
+      </view>
+      <view class="detail-row"><text class="text-muted">数量</text><text>{{item.quantity}}</text></view>
+      <view class="detail-row"><text class="text-muted">保证金</text><text>{{item.margin_cost}} USDT</text></view>
+      <view class="detail-row" wx:if="{{item.filled_price}}"><text class="text-muted">成交价</text><text>{{item.filled_price}}</text></view>
+      <view class="detail-row"><text class="text-muted">时间</text><text class="text-sm">{{item.time_text}}</text></view>
+    </view>
+  </block>
+
+  <!-- 成交记录 -->
+  <block wx:if="{{tab === 'trades'}}">
+    <view class="card" wx:for="{{trades}}" wx:key="id">
+      <view class="flex-between">
+        <text class="{{item.side === 1 ? 'color-up' : 'color-down'}}">{{item.side === 1 ? '买入' : '卖出'}}</text>
+        <text class="text-sm {{item.is_close ? 'text-muted' : ''}}">{{item.is_close ? '平仓' : '开仓'}}</text>
+      </view>
+      <view class="detail-row"><text class="text-muted">价格</text><text>{{item.price}}</text></view>
+      <view class="detail-row"><text class="text-muted">手续费</text><text>{{item.fee}} USDT</text></view>
+      <view class="detail-row" wx:if="{{item.is_close}}"><text class="text-muted">盈亏</text>
+        <text class="{{parseFloat(item.realized_pnl) >= 0 ? 'color-up' : 'color-down'}}">{{item.realized_pnl}} USDT</text>
+      </view>
+    </view>
+  </block>
+
+  <!-- 资金费 -->
+  <block wx:if="{{tab === 'funding'}}">
+    <view class="card" wx:for="{{fundings}}" wx:key="settle_time">
+      <view class="flex-between">
+        <text class="text-muted text-sm">费率 {{item.rate}}</text>
+        <text class="{{parseFloat(item.payment) >= 0 ? 'color-up' : 'color-down'}}">{{item.payment}} USDT</text>
+      </view>
+      <view class="detail-row"><text class="text-muted">仓位价值</text><text>{{item.position_value}} USDT</text></view>
+    </view>
+  </block>
+
+  <!-- 盈亏汇总 -->
+  <block wx:if="{{tab === 'pnl'}}">
+    <view class="card">
+      <view class="pnl-summary-row"><text>总盈亏</text><text class="{{parseFloat(pnlSummary.total_pnl) >= 0 ? 'color-up' : 'color-down'}} text-bold text-lg">{{pnlSummary.total_pnl}} USDT</text></view>
+      <view class="divider"></view>
+      <view class="pnl-summary-row"><text class="text-muted">总手续费</text><text>{{pnlSummary.total_fee}} USDT</text></view>
+      <view class="pnl-summary-row"><text class="text-muted">总资金费</text><text>{{pnlSummary.total_funding}} USDT</text></view>
+      <view class="pnl-summary-row"><text class="text-muted">胜率</text><text>{{pnlSummary.win_rate}}% ({{pnlSummary.win_count}}胜/{{pnlSummary.loss_count}}负)</text></view>
+      <view class="pnl-summary-row"><text class="text-muted">最佳交易</text><text class="color-up">{{pnlSummary.best_trade}} USDT</text></view>
+      <view class="pnl-summary-row"><text class="text-muted">最差交易</text><text class="color-down">{{pnlSummary.worst_trade}} USDT</text></view>
+      <view class="pnl-summary-row"><text class="text-muted">强平次数</text><text>{{pnlSummary.liquidated_count}}</text></view>
+      <view class="pnl-summary-row"><text class="text-muted">强盈次数</text><text>{{pnlSummary.force_tp_count}}</text></view>
+    </view>
+  </block>
+
+  <view class="text-muted text-sm" style="text-align:center; margin-top:20rpx" wx:if="{{loading}}">加载中...</view>
+</view>

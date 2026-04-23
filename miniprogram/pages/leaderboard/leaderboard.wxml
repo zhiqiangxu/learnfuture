@@ -1,0 +1,24 @@
+<view class="container">
+  <view class="tabs">
+    <view class="tab {{tab === 'pnl' ? 'active' : ''}}" bindtap="switchTab" data-tab="pnl">总盈亏</view>
+    <view class="tab {{tab === 'roi' ? 'active' : ''}}" bindtap="switchTab" data-tab="roi">收益率</view>
+  </view>
+
+  <!-- 我的排名 -->
+  <view class="card my-rank" wx:if="{{myRank}}">
+    <text class="text-muted text-sm">我的排名</text>
+    <view class="flex-between">
+      <text class="text-bold text-lg">#{{myRank.rank}}</text>
+      <text class="{{parseFloat(myRank.value) >= 0 ? 'color-up' : 'color-down'}}">{{myRank.value}}</text>
+    </view>
+  </view>
+
+  <!-- 排行列表 -->
+  <view class="card rank-item" wx:for="{{list}}" wx:key="rank">
+    <view class="rank-num {{item.rank <= 3 ? 'top3' : ''}}">{{item.rank}}</view>
+    <view class="rank-info">
+      <text>{{item.nickname || '用户' + item.user_id}}</text>
+    </view>
+    <text class="rank-value {{parseFloat(item.value) >= 0 ? 'color-up' : 'color-down'}}">{{item.value}}</text>
+  </view>
+</view>

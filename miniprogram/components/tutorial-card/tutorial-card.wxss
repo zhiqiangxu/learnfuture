@@ -1,0 +1,82 @@
+.overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,0.7);
+  display: flex;
+  align-items: flex-end;
+  z-index: 999;
+}
+
+.card {
+  width: 100%;
+  background: #1a1a2e;
+  border-radius: 24rpx 24rpx 0 0;
+  padding: 40rpx;
+  animation: slideUp 0.3s ease-out;
+}
+
+@keyframes slideUp {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+
+.card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 24rpx;
+}
+
+.card-title {
+  font-size: 34rpx;
+  font-weight: bold;
+  color: #fff;
+}
+
+.close-btn {
+  font-size: 40rpx;
+  color: #666;
+  padding: 10rpx;
+}
+
+.card-body {
+  margin-bottom: 30rpx;
+}
+
+.content {
+  font-size: 28rpx;
+  color: #ccc;
+  line-height: 1.8;
+}
+
+.formula-box, .example-box {
+  margin-top: 20rpx;
+  background: #0f0f23;
+  border-radius: 12rpx;
+  padding: 20rpx;
+  border-left: 4rpx solid #00d4aa;
+}
+
+.formula-label, .example-label {
+  font-size: 22rpx;
+  color: #00d4aa;
+  display: block;
+  margin-bottom: 8rpx;
+}
+
+.formula, .example {
+  font-size: 26rpx;
+  color: #e0e0e0;
+  font-family: monospace;
+  white-space: pre-wrap;
+}
+
+.got-it-btn {
+  background: #00d4aa;
+  color: #fff;
+  border: none;
+  border-radius: 12rpx;
+  padding: 20rpx;
+  font-size: 30rpx;
+  width: 100%;
+}

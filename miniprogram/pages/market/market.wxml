@@ -1,0 +1,86 @@
+<!-- 行情页 -->
+<view class="container">
+  <!-- 价格显示 -->
+  <view class="card price-card">
+    <view class="symbol">BTC/USDT</view>
+    <view class="price {{priceDirection}}">{{price}}</view>
+    <view class="flex-between mt-20">
+      <view class="stat">
+        <text class="text-muted text-sm">24h涨跌</text>
+        <text class="{{change >= 0 ? 'color-up' : 'color-down'}}">{{change}}%</text>
+      </view>
+      <view class="stat">
+        <text class="text-muted text-sm">24h最高</text>
+        <text>{{high}}</text>
+      </view>
+      <view class="stat">
+        <text class="text-muted text-sm">24h最低</text>
+        <text>{{low}}</text>
+      </view>
+    </view>
+
+    <!-- 标记价格（教学展示） -->
+    <view class="divider"></view>
+    <view class="flex-between">
+      <view class="stat">
+        <text class="text-muted text-sm">标记价格</text>
+        <text class="text-sm">{{markPrice}}</text>
+      </view>
+      <view class="stat">
+        <text class="text-muted text-sm">指数价格</text>
+        <text class="text-sm">{{indexPrice}}</text>
+      </view>
+      <view class="stat">
+        <text class="text-muted text-sm">基差</text>
+        <text class="text-sm">{{basis}}%</text>
+      </view>
+    </view>
+  </view>
+
+  <!-- K线时间选择 -->
+  <view class="card">
+    <view class="interval-tabs">
+      <view wx:for="{{intervals}}" wx:key="*this"
+            class="tab {{currentInterval === item ? 'active' : ''}}"
+            bindtap="switchInterval" data-interval="{{item}}">
+        {{item}}
+      </view>
+    </view>
+    <!-- K线图区域 (ECharts) -->
+    <view class="kline-area">
+      <view class="kline-placeholder" wx:if="{{!klineLoaded}}">
+        <text class="text-muted">加载K线数据中...</text>
+      </view>
+    </view>
+  </view>
+
+  <!-- 资金费率 -->
+  <view class="card">
+    <view class="flex-between">
+      <view>
+        <text class="text-muted text-sm">当前资金费率</text>
+        <text class="{{fundingRate >= 0 ? 'color-up' : 'color-down'}} text-bold ml-10">{{fundingRate}}%</text>
+      </view>
+      <view>
+        <text class="text-muted text-sm">下次结算</text>
+        <text class="text-sm">{{nextSettle}}</text>
+      </view>
+    </view>
+  </view>
+
+  <!-- 保险基金 -->
+  <view class="card">
+    <view class="flex-between">
+      <text class="text-muted text-sm">保险基金余额</text>
+      <text class="text-sm">{{insuranceFund}} USDT</text>
+    </view>
+  </view>
+
+  <!-- 快捷交易入口 -->
+  <view class="trade-buttons">
+    <button class="btn-long" bindtap="goTrade" data-side="1">开多</button>
+    <button class="btn-short" bindtap="goTrade" data-side="-1">开空</button>
+  </view>
+</view>
+
+<tutorial-card show="{{showTutorial}}" tutorial="{{tutorialData}}" bind:close="closeTutorial" />
