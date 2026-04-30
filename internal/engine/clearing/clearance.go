@@ -172,9 +172,10 @@ type CloseClearingResult struct {
 	RemainingQty decimal.Decimal
 	CloseRatio   decimal.Decimal
 	CloseMargin  decimal.Decimal
+	CloseValue   decimal.Decimal // qty × closePrice (actual close value for fee calc)
 	CloseFundingPnl decimal.Decimal
 	CloseFee     decimal.Decimal
-	RawPnl       decimal.Decimal
+	RawPnl       decimal.Decimal // price diff pnl before fee
 	RealizedPnl  decimal.Decimal // rawPnl - fee
 	NetPnl       decimal.Decimal // realizedPnl + fundingPnl
 	ClosePrice   decimal.Decimal
@@ -201,8 +202,9 @@ func (c *Clearance) ClearClose(input *CloseClearingInput) *CloseClearingResult {
 	closeMargin := pos.Margin.Mul(closeRatio)
 	closeFundingPnl := pos.FundingPnl.Mul(closeRatio)
 
-	positionValue := closeMargin.Mul(decimal.NewFromInt(int64(pos.Leverage)))
-	closeFee, _ := c.calcFee(positionValue, false) // close = Taker
+	// Fee based on actual close value (qty × closePrice), not opening value
+	closeValue := closedQty.Mul(input.ClosePrice)
+	closeFee, _ := c.calcFee(closeValue, false) // close = Taker
 
 	rawPnl := position.CalcUnrealizedPnL(pos.EntryPrice, input.ClosePrice, closedQty, pos.Side)
 	realizedPnl := rawPnl.Sub(closeFee)
@@ -214,6 +216,7 @@ func (c *Clearance) ClearClose(input *CloseClearingInput) *CloseClearingResult {
 		RemainingQty:    remainingQty,
 		CloseRatio:      closeRatio,
 		CloseMargin:     closeMargin,
+		CloseValue:      closeValue,
 		CloseFundingPnl: closeFundingPnl,
 		CloseFee:        closeFee,
 		RawPnl:          rawPnl,

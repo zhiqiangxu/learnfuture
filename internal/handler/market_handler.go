@@ -35,9 +35,10 @@ func KlinesHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			}
 		}
 
-		// Try cache first
+		// Try cache first. Second-level klines (1s/5s/15s) are memory-only, never query DB.
+		isSecondLevel := interval == "1s" || interval == "5s" || interval == "15s"
 		bars := svcCtx.KlineAggregator.GetCachedKlines(interval, limit)
-		if len(bars) >= limit || svcCtx.KlineModel == nil {
+		if len(bars) >= limit || isSecondLevel || svcCtx.KlineModel == nil {
 			klines := make([]types.Kline, 0, len(bars))
 			for _, b := range bars {
 				klines = append(klines, types.Kline{

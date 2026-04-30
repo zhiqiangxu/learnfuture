@@ -1,0 +1,17 @@
+{
+  "name": "miniprogram",
+  "version": "1.0.0",
+  "description": "",
+  "main": "app.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "browserslist": "^4.28.2",
+    "caniuse-lite": "^1.0.30001791",
+    "miniprogram-ci": "^2.1.31"
+  }
+}

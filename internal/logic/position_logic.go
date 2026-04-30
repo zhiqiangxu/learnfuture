@@ -47,6 +47,7 @@ func (l *PositionLogic) Close(userID, positionID int64, qtyStr string) (*types.C
 	card := tutorial.ShouldShow(tutorial.TopicRealizedPnl, completed)
 	if card != nil {
 		card = tutorial.ForRealizedPnl(tutorial.TriggerContext{
+			RawPnl:  result.RawPnl.StringFixed(2),
 			Pnl:     result.RealizedPnl.StringFixed(2),
 			Fee:     result.Fee.StringFixed(2),
 			Funding: result.FundingPnl.StringFixed(2),
@@ -118,42 +119,43 @@ func (l *PositionLogic) UpdateTPSL(userID int64, req *types.UpdateTPSLReq) (*typ
 }
 
 func (l *PositionLogic) List(userID int64) (*types.PositionListResp, error) {
-	positions, err := l.svcCtx.PositionModel.FindActiveByUser(userID)
-	if err != nil {
-		return nil, err
-	}
-
+	// Read from memory cache (consistent with ClosePosition which also reads from cache)
+	cached := l.svcCtx.PositionCache.GetByUser(userID)
 	currentPrice := l.svcCtx.PriceCache.GetPrice()
-	list := make([]types.PositionInfo, 0, len(positions))
+	list := make([]types.PositionInfo, 0, len(cached))
 
-	for _, p := range positions {
-		upnl := position.CalcUnrealizedPnL(p.EntryPrice, currentPrice, p.Quantity, p.Side)
-		roi := position.CalcROI(upnl, p.Margin)
-		marginRatio := position.CalcMarginRatio(p.Margin, upnl, p.Quantity, currentPrice)
-		adlLevel := adl.GetADLIndicator(roi, len(positions))
+	for _, cp := range cached {
+		entryPrice, _ := decimal.NewFromString(cp.EntryPrice)
+		quantity, _ := decimal.NewFromString(cp.Quantity)
+		margin, _ := decimal.NewFromString(cp.Margin)
+		fundingPnl, _ := decimal.NewFromString(cp.FundingPnl)
+
+		upnl := position.CalcUnrealizedPnL(entryPrice, currentPrice, quantity, cp.Side)
+		roi := position.CalcROI(upnl, margin)
+		marginRatio := position.CalcMarginRatio(margin, upnl, quantity, currentPrice)
+		adlLevel := adl.GetADLIndicator(roi, len(cached))
 
 		info := types.PositionInfo{
-			ID:            p.ID,
-			Side:          p.Side,
-			MarginMode:    p.MarginMode,
-			Leverage:      p.Leverage,
-			EntryPrice:    p.EntryPrice.String(),
-			Quantity:      p.Quantity.String(),
-			Margin:        p.Margin.StringFixed(2),
-			LiqPrice:      p.LiqPrice.StringFixed(2),
-			ForceTpPrice:  p.ForceTpPrice.StringFixed(2),
+			ID:            cp.ID,
+			Side:          cp.Side,
+			MarginMode:    cp.MarginMode,
+			Leverage:      cp.Leverage,
+			EntryPrice:    cp.EntryPrice,
+			Quantity:      cp.Quantity,
+			Margin:        margin.StringFixed(2),
+			LiqPrice:      cp.LiqPrice,
+			ForceTpPrice:  cp.ForceTpPrice,
 			UnrealizedPnl: upnl.StringFixed(2),
 			ROI:           roi.StringFixed(2),
 			MarginRatio:   marginRatio.StringFixed(4),
-			FundingPnl:    p.FundingPnl.StringFixed(2),
+			FundingPnl:    fundingPnl.StringFixed(2),
 			ADLIndicator:  adlLevel,
-			OpenedAt:      p.OpenedAt.Unix(),
 		}
-		if p.TakeProfit != nil {
-			info.TakeProfit = p.TakeProfit.String()
+		if cp.TakeProfit != "" {
+			info.TakeProfit = cp.TakeProfit
 		}
-		if p.StopLoss != nil {
-			info.StopLoss = p.StopLoss.String()
+		if cp.StopLoss != "" {
+			info.StopLoss = cp.StopLoss
 		}
 		list = append(list, info)
 	}

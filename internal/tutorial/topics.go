@@ -43,9 +43,9 @@ var Topics = map[string]*types.TutorialCard{
 	TopicPerpetualIntro: {
 		ID:       TopicPerpetualIntro,
 		Title:    "什么是永续合约？",
-		Content:  "永续合约是一种没有到期日的衍生品合约，可以无限期持有。它通过「资金费率」机制使合约价格锚定现货价格。与交割合约不同，永续合约不需要交割，更适合灵活交易。",
+		Content:  "永续合约是一种没有到期日的衍生品合约，可以无限期持有。它通过「资金费率」机制使合约价格锚定现货价格。与交割合约不同，永续合约不需要交割，更适合灵活交易。\n\n简单说：你不需要真的买BTC，只需要猜BTC涨还是跌。猜对了赚差价，猜错了亏差价。",
 		Formula:  "",
-		Example:  "你买入1个BTC永续合约，相当于持有1个BTC的价格敞口，但不需要真的持有BTC",
+		Example:  "BTC现在60000U，你觉得会涨→开多合约→BTC涨到65000→你赚5000U的差价（不需要真的持有BTC）",
 		ShowOnce: true,
 	},
 	TopicLeverage: {
@@ -116,8 +116,8 @@ var Topics = map[string]*types.TutorialCard{
 		ID:       TopicRealizedPnl,
 		Title:    "已实现盈亏",
 		Content:  "平仓后的实际盈亏，需要扣除手续费和累计的资金费用。这才是你真正赚到或亏掉的钱。",
-		Formula:  "净盈亏 = 已实现盈亏 - 手续费 - 资金费用",
-		Example:  "平仓盈利500U - 开仓手续费0.4U - 平仓手续费0.4U - 资金费1U = 净赚498.2U",
+		Formula:  "价格盈亏 = (平仓价 - 开仓价) × 数量 × 方向\n已实现盈亏 = 价格盈亏 - 平仓手续费\n净盈亏 = 已实现盈亏 + 累计资金费",
+		Example:  "价格盈亏+500U - 平仓手续费0.4U = 已实现盈亏499.6U + 资金费-1U = 净盈亏498.6U",
 		ShowOnce: true,
 	},
 	TopicMarketOrder: {

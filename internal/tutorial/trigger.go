@@ -9,10 +9,11 @@ import (
 type TriggerContext struct {
 	LiqPrice string
 	Margin   string
-	Pnl      string
-	Fee      string
-	Funding  string
-	NetPnl   string
+	RawPnl   string // 价格变动盈亏（未扣手续费）
+	Pnl      string // 已实现盈亏（已扣平仓手续费）
+	Fee      string // 平仓手续费
+	Funding  string // 累计资金费
+	NetPnl   string // 净盈亏 = 已实现盈亏 + 资金费
 	Price    string
 	Profit   string
 }
@@ -57,8 +58,12 @@ func ForForceTakeProfit(ctx TriggerContext) *types.TutorialCard {
 func ForRealizedPnl(ctx TriggerContext) *types.TutorialCard {
 	card := *Topics[TopicRealizedPnl] // copy
 	card.Example = fmt.Sprintf(
-		"本次盈亏=%sU，手续费=%sU，资金费用=%sU，净盈亏=%sU",
-		ctx.Pnl, ctx.Fee, ctx.Funding, ctx.NetPnl,
+		"价格变动盈亏（未扣费）=%sU\n"+
+			"平仓手续费=%sU\n"+
+			"已实现盈亏（扣费后）=%sU\n"+
+			"累计资金费=%sU\n"+
+			"净盈亏=%sU",
+		ctx.RawPnl, ctx.Fee, ctx.Pnl, ctx.Funding, ctx.NetPnl,
 	)
 	return &card
 }

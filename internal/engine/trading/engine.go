@@ -76,7 +76,8 @@ type PlaceOrderResult struct {
 }
 
 type CloseResult struct {
-	RealizedPnl  decimal.Decimal
+	RawPnl       decimal.Decimal // price diff pnl before fee
+	RealizedPnl  decimal.Decimal // rawPnl - fee
 	Fee          decimal.Decimal
 	FundingPnl   decimal.Decimal
 	NetPnl       decimal.Decimal
@@ -518,7 +519,7 @@ func (e *Engine) applyClose(pos *model.Position, closePrice, closedQty decimal.D
 	})
 
 	return &CloseResult{
-		RealizedPnl: cr.RealizedPnl, Fee: cr.CloseFee, FundingPnl: cr.CloseFundingPnl,
+		RawPnl: cr.RawPnl, RealizedPnl: cr.RealizedPnl, Fee: cr.CloseFee, FundingPnl: cr.CloseFundingPnl,
 		NetPnl: cr.NetPnl, ClosePrice: closePrice, ClosedQty: cr.ClosedQty,
 		RemainingQty: cr.RemainingQty, IsPartial: cr.IsPartial,
 	}, nil

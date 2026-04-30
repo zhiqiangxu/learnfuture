@@ -1,0 +1,885 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>合约模拟学习平台</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #0f0f23; color: #e0e0e0; font-family: -apple-system, BlinkMacSystemFont, sans-serif; font-size: 14px; }
+    .app { max-width: 500px; margin: 0 auto; min-height: 100vh; display: flex; flex-direction: column; }
+
+    /* Tab bar */
+    .tab-bar { display: flex; background: #1a1a2e; border-top: 1px solid #2a2a4a; position: fixed; bottom: 0; left: 0; right: 0; z-index: 100; }
+    .tab-bar .tab { flex: 1; text-align: center; padding: 8px 0; color: #666; font-size: 12px; cursor: pointer; }
+    .tab-bar .tab.active { color: #00d4aa; }
+
+    /* Pages */
+    .page { display: none; padding: 12px; padding-bottom: 60px; }
+    .page.active { display: block; }
+
+    /* Cards */
+    .card { background: #1a1a2e; border-radius: 12px; padding: 16px; margin-bottom: 12px; }
+    .divider { height: 1px; background: #2a2a4a; margin: 12px 0; }
+
+    /* Colors */
+    .up { color: #00d4aa; } .down { color: #ff4d6a; }
+    .bg-up { background: #00d4aa; color: #fff; } .bg-down { background: #ff4d6a; color: #fff; }
+    .muted { color: #666; } .bold { font-weight: bold; } .sm { font-size: 12px; }
+
+    /* Layout */
+    .flex { display: flex; } .between { justify-content: space-between; } .center { align-items: center; }
+    .col { flex-direction: column; } .gap8 { gap: 8px; } .gap4 { gap: 4px; } .flex1 { flex: 1; }
+    .mt8 { margin-top: 8px; } .mt12 { margin-top: 12px; }
+
+    /* Price */
+    .price-big { font-size: 32px; font-weight: bold; margin: 4px 0; }
+    .stat { display: flex; flex-direction: column; gap: 2px; }
+
+    /* Buttons */
+    .btn { border: none; border-radius: 8px; padding: 12px 24px; font-size: 15px; font-weight: bold; cursor: pointer; width: 100%; }
+    .btn-long { background: #00d4aa; color: #fff; }
+    .btn-short { background: #ff4d6a; color: #fff; }
+    .btn-default { background: #2a2a4a; color: #e0e0e0; }
+    .btn:disabled { opacity: 0.5; }
+
+    /* Input */
+    .input-group { margin-bottom: 12px; }
+    .input-label { font-size: 12px; color: #999; margin-bottom: 4px; display: block; }
+    .input-field { background: #0f0f23; border: 1px solid #2a2a4a; border-radius: 8px; padding: 10px; color: #fff; font-size: 14px; width: 100%; outline: none; }
+    .input-field:focus { border-color: #00d4aa; }
+
+    /* Tabs */
+    .tabs { display: flex; gap: 0; margin-bottom: 12px; border-radius: 8px; overflow: hidden; }
+    .tabs .t { flex: 1; text-align: center; padding: 10px; background: #2a2a4a; color: #999; cursor: pointer; font-size: 13px; }
+    .tabs .t.active-long { background: #00d4aa; color: #fff; }
+    .tabs .t.active-short { background: #ff4d6a; color: #fff; }
+    .tabs .t.active { background: #3a3a5a; color: #fff; }
+
+    /* Slider */
+    .slider-row { display: flex; align-items: center; gap: 8px; }
+    .slider-row input[type=range] { flex: 1; accent-color: #00d4aa; }
+    .presets { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+    .presets span { padding: 4px 12px; background: #0f0f23; border-radius: 4px; color: #999; font-size: 12px; cursor: pointer; }
+    .presets span.active { background: #00d4aa; color: #fff; }
+
+    /* Calc detail */
+    .calc-row { display: flex; justify-content: space-between; padding: 4px 0; font-size: 12px; }
+
+    /* Depth */
+    .depth-row { display: flex; justify-content: space-between; padding: 3px 0; font-size: 12px; }
+
+    /* Position */
+    .pos-badge { padding: 2px 8px; border-radius: 4px; font-size: 11px; color: #fff; }
+    .margin-bar { height: 4px; background: #2a2a4a; border-radius: 2px; margin-top: 4px; }
+    .margin-fill { height: 100%; border-radius: 2px; transition: width 0.3s; }
+
+    /* Tutorial card overlay */
+    .overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); display: flex; align-items: flex-end; z-index: 200; }
+    .tutorial-card { width: 100%; background: #1a1a2e; border-radius: 16px 16px 0 0; padding: 24px; animation: slideUp 0.3s; }
+    @keyframes slideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
+    .formula-box { margin-top: 12px; background: #0f0f23; border-radius: 8px; padding: 12px; border-left: 3px solid #00d4aa; }
+
+    /* Loading */
+    .loading { text-align: center; color: #666; padding: 40px; }
+
+    /* Tooltip for terms */
+    .term { border-bottom: 1px dashed #555; cursor: help; position: relative; }
+    .term-tip { display: none; position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%); background: #2a2a4a; color: #e0e0e0; padding: 8px 12px; border-radius: 8px; font-size: 12px; width: 240px; z-index: 50; line-height: 1.6; box-shadow: 0 4px 12px rgba(0,0,0,0.5); pointer-events: none; }
+    .term-tip::after { content:''; position:absolute; top:100%; left:50%; transform:translateX(-50%); border:6px solid transparent; border-top-color:#2a2a4a; }
+    .term:hover .term-tip, .term:active .term-tip { display: block; }
+  </style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ===== 行情页 ===== -->
+  <div id="page-market" class="page active">
+    <div class="card">
+      <div class="muted sm">BTC/USDT</div>
+      <div id="price" class="price-big">--</div>
+      <div class="flex between mt8">
+        <div class="stat"><span class="muted sm term">24h涨跌<span class="term-tip">过去24小时的价格涨跌幅度，正数表示上涨，负数表示下跌</span></span><span id="change" class="up">0.00%</span></div>
+        <div class="stat"><span class="muted sm term">24h最高<span class="term-tip">过去24小时内的最高成交价</span></span><span id="high">--</span></div>
+        <div class="stat"><span class="muted sm term">24h最低<span class="term-tip">过去24小时内的最低成交价</span></span><span id="low">--</span></div>
+      </div>
+      <div class="divider"></div>
+      <div class="flex between">
+        <div class="stat"><span class="muted sm term">标记价格<span class="term-tip">用于计算强平的公允价格。基于现货价格+EMA平滑，防止合约价格被操纵导致不公平强平。强平看标记价格，不看最新成交价</span></span><span id="mark-price" class="sm">--</span></div>
+        <div class="stat"><span class="muted sm term">指数价格<span class="term-tip">现货市场的参考价格。标记价格基于指数价格计算。指数价格更稳定，不容易被操纵（因为现货没有杠杆）</span></span><span id="index-price" class="sm">--</span></div>
+        <div class="stat"><span class="muted sm term">基差<span class="term-tip">合约价格与现货价格的偏差比例。基差=(合约价-现货价)/现货价。正基差=合约溢价（多头多），负基差=合约折价（空头多）</span></span><span id="basis" class="sm">--</span></div>
+      </div>
+    </div>
+
+    <!-- K线图 -->
+    <div class="card">
+      <div class="flex gap4" style="margin-bottom:8px;flex-wrap:wrap" id="kline-tabs"></div>
+      <div id="kline-tooltip" style="font-size:11px;color:#999;margin-bottom:4px;height:14px"></div>
+      <canvas id="kline-canvas" width="460" height="260" style="width:100%;height:200px;background:#0f0f23;border-radius:8px;touch-action:none"></canvas>
+    </div>
+
+    <!-- 订单簿深度 -->
+    <div class="card">
+      <div class="bold sm term" style="margin-bottom:8px">订单簿<span class="term-tip">显示当前所有挂单。买盘(Bid)=想做多的人出的价，卖盘(Ask)=想做空的人出的价。你下市价单时，会按照订单簿中最优价格成交</span></div>
+      <div class="flex gap8">
+        <div class="flex1">
+          <div class="muted sm term" style="margin-bottom:4px">买盘 Bid<span class="term-tip">买方挂单，价格从高到低排列。最高买价=最可能成交的买单。你下市价空单时，会与最高买价成交</span></div>
+          <div id="depth-bids"></div>
+        </div>
+        <div class="flex1">
+          <div class="muted sm term" style="margin-bottom:4px">卖盘 Ask<span class="term-tip">卖方挂单，价格从低到高排列。最低卖价=最可能成交的卖单。你下市价多单时，会与最低卖价成交</span></div>
+          <div id="depth-asks"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="flex between center">
+        <div><span class="muted sm term">资金费率<span class="term-tip">每8小时结算一次，用于让合约价格锚定现货。费率为正=多头付钱给空头（做多有成本）；费率为负=空头付钱给多头。费率越大，说明多空越不平衡</span></span> <span id="funding-rate" class="up bold">--</span></div>
+        <div><span class="muted sm term">下次结算<span class="term-tip">资金费率在每天00:00、08:00、16:00 UTC结算。持仓中的用户在结算时刻会被收取或获得资金费</span></span> <span id="next-settle" class="sm">--</span></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="flex between center">
+        <span class="muted sm term">保险基金余额<span class="term-tip">交易所的风险缓冲池。当用户被强平时，如果强平价好于破产价，多余的钱进保险基金；如果市场剧烈波动导致穿仓，保险基金承担损失。保险基金耗尽则触发ADL（自动减仓）</span></span>
+        <span id="insurance-fund" class="sm">-- USDT</span>
+      </div>
+    </div>
+
+    <div class="flex gap8 mt12">
+      <button class="btn btn-long flex1" onclick="switchTab('trade')">开多</button>
+      <button class="btn btn-short flex1" onclick="switchTab('trade')">开空</button>
+    </div>
+  </div>
+
+  <!-- ===== 交易页 ===== -->
+  <div id="page-trade" class="page">
+    <div class="flex between center" style="margin-bottom:12px">
+      <span class="muted">BTC/USDT</span>
+      <span id="trade-price" class="bold">--</span>
+    </div>
+
+    <div class="tabs" id="side-tabs">
+      <div class="t active-long" onclick="setSide(1)">开多 (看涨)</div>
+      <div class="t" onclick="setSide(-1)">开空 (看跌)</div>
+    </div>
+
+    <div class="card">
+      <div class="flex between center">
+        <span class="term">杠杆倍数<span class="term-tip">用少量保证金控制更大仓位。10x=用100U控制1000U的仓位。杠杆放大收益也放大亏损，杠杆越高离强平越近</span></span>
+        <span id="lev-display" class="bold">10x</span>
+      </div>
+      <div class="slider-row mt8">
+        <input type="range" min="1" max="125" value="10" id="leverage-slider" oninput="onLeverage(this.value)">
+      </div>
+      <div class="presets" id="lev-presets"></div>
+    </div>
+
+    <div class="input-group">
+      <div class="flex between"><span class="input-label term">保证金 (USDT)<span class="term-tip">你投入的本金。保证金=仓位价值/杠杆。保证金越多仓位越大，但亏损时最多亏掉全部保证金（逐仓模式）</span></span><span class="muted sm">可用: <span id="available">--</span></span></div>
+      <input type="number" class="input-field" id="margin-input" placeholder="输入保证金金额" oninput="recalc()">
+    </div>
+
+    <!-- 计算详情 -->
+    <div class="card" id="calc-detail" style="display:none; border:1px solid #2a2a4a">
+      <div class="bold sm" style="margin-bottom:8px">📐 计算详情</div>
+      <div id="calc-rows"></div>
+    </div>
+
+    <button class="btn btn-long mt12" id="place-btn" onclick="placeOrder()">开多 买入/做多</button>
+  </div>
+
+  <!-- ===== 持仓页 ===== -->
+  <div id="page-position" class="page">
+    <div id="positions-list"><div class="loading">暂无持仓</div></div>
+  </div>
+
+  <!-- ===== 历史页 ===== -->
+  <div id="page-history" class="page">
+    <div class="loading">登录后查看历史记录</div>
+  </div>
+
+  <!-- ===== 我的 ===== -->
+  <div id="page-profile" class="page">
+    <div class="card">
+      <div class="muted sm">账户余额 (USDT)</div>
+      <div id="balance" class="price-big">--</div>
+      <div class="flex between mt8">
+        <div class="stat"><span class="muted sm">可用</span><span id="prof-available">--</span></div>
+        <div class="stat"><span class="muted sm">冻结</span><span id="prof-frozen">--</span></div>
+        <div class="stat"><span class="muted sm">总盈亏</span><span id="prof-pnl">--</span></div>
+      </div>
+    </div>
+
+    <!-- 学习中心入口 -->
+    <div class="card mt12" onclick="switchTab('learn')" style="cursor:pointer">
+      <div class="flex between center">
+        <div>
+          <div class="bold">📖 学习中心</div>
+          <div class="muted sm mt8">永续合约完整知识体系，14个核心知识点</div>
+        </div>
+        <span style="font-size:20px;color:#666">▸</span>
+      </div>
+    </div>
+
+    <button class="btn btn-default mt12" onclick="resetAccount()">重置账户 (回到10,000 USDT)</button>
+    <div style="text-align:center;margin-top:24px" class="muted sm">本平台为模拟交易学习工具，使用虚拟资金</div>
+  </div>
+
+  <!-- ===== 学习中心页 ===== -->
+  <div id="page-learn" class="page">
+    <div class="flex between center" style="margin-bottom:12px">
+      <span class="bold" style="font-size:16px">📖 学习中心</span>
+      <span class="muted sm" style="cursor:pointer" onclick="switchTab('profile')">← 返回</span>
+    </div>
+
+    <div class="card" id="learn-topic-1" onclick="expandTopic(1)">
+      <div class="flex between center"><span class="bold">1. 什么是永续合约</span><span class="muted" id="arrow-1">▸</span></div>
+      <div class="topic-detail" id="detail-1" style="display:none">
+        <div class="divider"></div>
+        <p style="line-height:1.8;color:#ccc">永续合约是一种没有到期日的衍生品合约，可以无限期持有。它通过「资金费率」机制使合约价格锚定现货价格。</p>
+        <p style="line-height:1.8;color:#ccc;margin-top:8px">简单说：你不需要真的买BTC，只需要猜BTC涨还是跌。猜对了赚差价，猜错了亏差价。</p>
+        <div class="formula-box mt8"><span class="sm up">举例</span><div style="margin-top:4px;color:#e0e0e0">BTC现在60000U，你觉得会涨→开多合约→BTC涨到65000→你赚5000U的差价（不需要真的持有BTC）</div></div>
+      </div>
+    </div>
+
+    <div class="card" onclick="expandTopic(2)">
+      <div class="flex between center"><span class="bold">2. 什么是杠杆</span><span class="muted" id="arrow-2">▸</span></div>
+      <div class="topic-detail" id="detail-2" style="display:none">
+        <div class="divider"></div>
+        <p style="line-height:1.8;color:#ccc">杠杆允许你用较少的保证金控制更大价值的仓位。10x杠杆意味着用100U保证金可以控制1000U的仓位。杠杆放大收益的同时也放大亏损，杠杆越高，离强平越近。</p>
+        <div class="formula-box mt8"><span class="sm up">公式</span><pre style="margin-top:4px;color:#e0e0e0;white-space:pre-wrap">保证金 = 仓位价值 / 杠杆倍数</pre></div>
+        <div class="formula-box mt8"><span class="sm up">举例</span><div style="margin-top:4px;color:#e0e0e0">100 USDT × 10倍杠杆 = 控制1000 USDT仓位<br>价格涨10% → 你赚100%（10倍放大）<br>价格跌10% → 你亏100%（爆仓）</div></div>
+      </div>
+    </div>
+
+    <div class="card" onclick="expandTopic(3)">
+      <div class="flex between center"><span class="bold">3. 多空机制</span><span class="muted" id="arrow-3">▸</span></div>
+      <div class="topic-detail" id="detail-3" style="display:none">
+        <div class="divider"></div>
+        <p style="line-height:1.8;color:#ccc">开多（做多）= 看涨，价格上涨时盈利，下跌时亏损。<br>开空（做空）= 看跌，价格下跌时盈利，上涨时亏损。<br>永续合约的核心优势就是可以双向交易，不管涨跌都能赚钱（如果猜对方向）。</p>
+        <div class="formula-box mt8"><span class="sm up">举例</span><div style="margin-top:4px;color:#e0e0e0">BTC = 60000U<br>你认为会涨 → 开多 → 涨到65000 → 赚5000U ✓<br>你认为会跌 → 开空 → 跌到55000 → 赚5000U ✓</div></div>
+      </div>
+    </div>
+
+    <div class="card" onclick="expandTopic(4)">
+      <div class="flex between center"><span class="bold">4. 未实现盈亏</span><span class="muted" id="arrow-4">▸</span></div>
+      <div class="topic-detail" id="detail-4" style="display:none">
+        <div class="divider"></div>
+        <p style="line-height:1.8;color:#ccc">未实现盈亏是你持仓中的浮动盈亏，只有平仓后才会变成真实的盈亏（已实现盈亏）。它会随着价格波动实时变化，还没平仓之前都不算数。</p>
+        <div class="formula-box mt8"><span class="sm up">公式</span><pre style="margin-top:4px;color:#e0e0e0;white-space:pre-wrap">未实现盈亏 = (当前价 - 开仓价) × 数量 × 方向
+方向: 多=1, 空=-1</pre></div>
+        <div class="formula-box mt8"><span class="sm up">举例</span><div style="margin-top:4px;color:#e0e0e0">开多 0.01BTC，开仓价60000，当前价65000<br>盈亏 = (65000-60000) × 0.01 × 1 = +50U（浮盈）</div></div>
+      </div>
+    </div>
+
+    <div class="card" onclick="expandTopic(5)">
+      <div class="flex between center"><span class="bold">5. 市价单 vs 限价单</span><span class="muted" id="arrow-5">▸</span></div>
+      <div class="topic-detail" id="detail-5" style="display:none">
+        <div class="divider"></div>
+        <p style="line-height:1.8;color:#ccc"><b>市价单</b>：以当前市场最优价格立即成交。优点是保证成交，缺点是可能有滑点（大单会吃掉多档价格）。手续费较高（Taker 0.04%）。</p>
+        <p style="line-height:1.8;color:#ccc;margin-top:8px"><b>限价单</b>：你指定一个价格，只有市场价到达这个价格才成交。优点是价格更好，手续费更低（Maker 0.02%），缺点是可能不成交。</p>
+        <div class="formula-box mt8"><span class="sm up">举例</span><div style="margin-top:4px;color:#e0e0e0">BTC = 60000<br>市价买入 → 立即以60010成交（吃卖盘最低价）<br>限价58000买入 → 挂单等待 → 价格跌到58000才成交</div></div>
+      </div>
+    </div>
+
+    <div class="card" onclick="expandTopic(6)">
+      <div class="flex between center"><span class="bold">6. 手续费 (Maker/Taker)</span><span class="muted" id="arrow-6">▸</span></div>
+      <div class="topic-detail" id="detail-6" style="display:none">
+        <div class="divider"></div>
+        <p style="line-height:1.8;color:#ccc">每次开仓和平仓都要付手续费。Taker=你的单立即和订单簿里的挂单成交（你"吃掉"了别人的单，费率0.04%）。Maker=你的单挂在订单簿里等别人来吃（你"提供"了流动性，费率0.02%）。<br><br>市价单一定是Taker；限价单如果价格穿过了对手盘也会立即成交变成Taker，只有挂在订单簿里等待时才是Maker。</p>
+        <div class="formula-box mt8"><span class="sm up">公式</span><pre style="margin-top:4px;color:#e0e0e0;white-space:pre-wrap">手续费 = 仓位价值 × 费率
+仓位价值 = 保证金 × 杠杆</pre></div>
+        <div class="formula-box mt8"><span class="sm up">举例</span><div style="margin-top:4px;color:#e0e0e0">100U保证金 × 10x杠杆 = 1000U仓位价值<br>Taker手续费 = 1000 × 0.04% = 0.4U<br>开仓+平仓 = 0.8U（别小看，频繁交易很快累积）</div></div>
+      </div>
+    </div>
+
+    <div class="card" onclick="expandTopic(7)">
+      <div class="flex between center"><span class="bold">7. 止盈止损</span><span class="muted" id="arrow-7">▸</span></div>
+      <div class="topic-detail" id="detail-7" style="display:none">
+        <div class="divider"></div>
+        <p style="line-height:1.8;color:#ccc">止盈(TP)：价格到了你设定的目标价，自动平仓锁定利润。<br>止损(SL)：价格跌到你设定的底线，自动平仓限制亏损。<br><br><b>重要：</b>TP和SL是OCO关系——触发一个会自动取消另一个。建议每笔交易都设止损！</p>
+        <div class="formula-box mt8"><span class="sm up">举例</span><div style="margin-top:4px;color:#e0e0e0">60000开多<br>设止盈65000 → 涨到65000自动平仓，赚5000<br>设止损58000 → 跌到58000自动平仓，亏2000<br>不设止损 → 可能跌到强平价，亏掉全部保证金</div></div>
+      </div>
+    </div>
+
+    <div class="card" onclick="expandTopic(8)">
+      <div class="flex between center"><span class="bold">8. 资金费率</span><span class="muted" id="arrow-8">▸</span></div>
+      <div class="topic-detail" id="detail-8" style="display:none">
+        <div class="divider"></div>
+        <p style="line-height:1.8;color:#ccc">每8小时结算一次（00:00/08:00/16:00 UTC）。用于让合约价格锚定现货价格。<br><br>费率为正 → 做多的人付钱给做空的人（做多有成本）<br>费率为负 → 做空的人付钱给做多的人</p>
+        <div class="formula-box mt8"><span class="sm up">公式</span><pre style="margin-top:4px;color:#e0e0e0;white-space:pre-wrap">资金费 = 仓位价值 × 资金费率 × (-方向)
+其中: 多头方向=1, 空头方向=-1
+
+举例: 仓位价值10000U, 费率=+0.01%
+
+多头: 10000 × 0.0001 × (-1) = -1U (负数=付出)
+空头: 10000 × 0.0001 × (1)  = +1U (正数=收到)
+
+→ 费率为正时, 多头付1U给空头</pre></div>
+        <div class="formula-box mt8"><span class="sm up">为什么需要资金费率？</span><div style="margin-top:4px;color:#e0e0e0">如果做多的人太多，合约价格会被推高。资金费率让多头付钱，激励更多人做空，从而让合约价格回到现货水平。这就是永续合约"永续"的秘密——不靠到期交割，靠资金费率锚定。</div></div>
+      </div>
+    </div>
+
+    <div class="card" onclick="expandTopic(9)">
+      <div class="flex between center"><span class="bold">9. 强制平仓（爆仓）</span><span class="muted" id="arrow-9">▸</span></div>
+      <div class="topic-detail" id="detail-9" style="display:none">
+        <div class="divider"></div>
+        <p style="line-height:1.8;color:#ccc">当你的保证金率降到0.5%以下时，系统强制平仓，你会亏掉全部保证金。杠杆越高，强平价离开仓价越近，越容易爆仓。</p>
+        <div class="formula-box mt8"><span class="sm up">公式</span><pre style="margin-top:4px;color:#e0e0e0;white-space:pre-wrap">强平价(多) = 开仓价 × (1 - 1/杠杆) / (1 - 0.5%)
+保证金率 = (保证金 + 未实现盈亏) / 仓位价值</pre></div>
+        <div class="formula-box mt8"><span class="sm up">不同杠杆下的强平距离</span><div style="margin-top:4px;color:#e0e0e0">60000开多：<br>1x → 价格跌到≈0才爆（几乎不会）<br>10x → 跌9.5%就爆<br>50x → 跌2.5%就爆<br>100x → 跌0.5%就爆（价格动一下）</div></div>
+      </div>
+    </div>
+
+    <div class="card" onclick="expandTopic(10)">
+      <div class="flex between center"><span class="bold">10. 保险基金与ADL</span><span class="muted" id="arrow-10">▸</span></div>
+      <div class="topic-detail" id="detail-10" style="display:none">
+        <div class="divider"></div>
+        <p style="line-height:1.8;color:#ccc"><b>保险基金</b>：交易所的风险缓冲池。强平时如果还有剩余保证金，归保险基金；如果市场跳空导致穿仓（亏损超过保证金），保险基金承担。</p>
+        <p style="line-height:1.8;color:#ccc;margin-top:8px"><b>ADL（自动减仓）</b>：保险基金耗尽时启动。系统按盈利排名强制减仓对手方——赚得最多的仓位最先被减仓。这是最后的风控手段。</p>
+        <div class="formula-box mt8"><span class="sm up">ADL灯</span><div style="margin-top:4px;color:#e0e0e0">持仓页显示1-5灯，表示你被ADL的风险：<br>5灯 = 你是最赚钱的，最先被减仓<br>1灯 = 安全</div></div>
+      </div>
+    </div>
+
+    <div class="card" onclick="expandTopic(11)">
+      <div class="flex between center"><span class="bold">11. 标记价格与指数价格</span><span class="muted" id="arrow-11">▸</span></div>
+      <div class="topic-detail" id="detail-11" style="display:none">
+        <div class="divider"></div>
+        <p style="line-height:1.8;color:#ccc"><b>最新成交价</b>：合约市场的最新交易价格，用于开仓/平仓/盈亏显示。<br><b>指数价格</b>：现货市场的价格，更稳定，不容易被操纵。<br><b>标记价格</b>：基于指数价格计算，用于强平判断。</p>
+        <p style="line-height:1.8;color:#ccc;margin-top:8px"><b>为什么不用最新价算强平？</b>因为有人可能故意在合约市场砸一个极低价（闪崩），如果用这个价算强平，大量用户会被不公平地爆仓。标记价格基于现货，防止这种操纵。</p>
+        <div class="formula-box mt8"><span class="sm up">公式</span><pre style="margin-top:4px;color:#e0e0e0;white-space:pre-wrap">基差 = (合约价 - 现货价) / 现货价
+标记价格 = 指数价格 × (1 + EMA(基差))</pre></div>
+      </div>
+    </div>
+
+    <div class="card" onclick="expandTopic(12)">
+      <div class="flex between center"><span class="bold">12. 已实现盈亏</span><span class="muted" id="arrow-12">▸</span></div>
+      <div class="topic-detail" id="detail-12" style="display:none">
+        <div class="divider"></div>
+        <p style="line-height:1.8;color:#ccc">平仓后的实际盈亏。需要扣除两笔手续费（开仓+平仓）和累计的资金费用。这才是你真正赚到或亏掉的钱。</p>
+        <div class="formula-box mt8"><span class="sm up">公式</span><pre style="margin-top:4px;color:#e0e0e0;white-space:pre-wrap">净盈亏 = (平仓价 - 开仓价) × 数量 × 方向
+       - 开仓手续费 - 平仓手续费
+       + 累计资金费</pre></div>
+      </div>
+    </div>
+
+    <div class="card" onclick="expandTopic(13)">
+      <div class="flex between center"><span class="bold">13. 逐仓 vs 全仓</span><span class="muted" id="arrow-13">▸</span></div>
+      <div class="topic-detail" id="detail-13" style="display:none">
+        <div class="divider"></div>
+        <p style="line-height:1.8;color:#ccc"><b>逐仓(Isolated)</b>：每个仓位独立锁保证金。爆仓只亏这个仓位的保证金，其他不受影响。适合新手。</p>
+        <p style="line-height:1.8;color:#ccc;margin-top:8px"><b>全仓(Cross)</b>：所有仓位共享账户余额。好处是不容易爆（余额自动补保证金），坏处是一旦爆了全部余额归零。适合高手。</p>
+        <div class="formula-box mt8"><span class="sm up">举例</span><div style="margin-top:4px;color:#e0e0e0">账户1000U，开两个仓各用100U<br>逐仓：爆一个仓最多亏100U，剩余900U安全<br>全仓：一个仓亏损会吃掉余额，极端情况1000U全部归零</div></div>
+      </div>
+    </div>
+
+    <div class="card" onclick="expandTopic(14)">
+      <div class="flex between center"><span class="bold">14. 订单簿与撮合</span><span class="muted" id="arrow-14">▸</span></div>
+      <div class="topic-detail" id="detail-14" style="display:none">
+        <div class="divider"></div>
+        <p style="line-height:1.8;color:#ccc">订单簿是所有挂单的集合。买盘(Bid)=想做多的人，卖盘(Ask)=想做空的人。你下单后进入订单簿，和对手方按价格优先、时间优先的规则匹配成交。</p>
+        <p style="line-height:1.8;color:#ccc;margin-top:8px">做市商会在买卖两边持续挂单提供流动性，确保你随时能成交。做市商赚的是买卖价差(spread)。</p>
+        <div class="formula-box mt8"><span class="sm up">撮合规则</span><div style="margin-top:4px;color:#e0e0e0">1. 价格优先：出价高的买单优先成交<br>2. 时间优先：同价格先挂的优先成交<br>3. 成交价=挂单方(Maker)的价格</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Tutorial overlay -->
+  <div id="tutorial-overlay" class="overlay" style="display:none" onclick="closeTutorial()">
+    <div class="tutorial-card" onclick="event.stopPropagation()">
+      <div class="flex between center"><span id="tut-title" class="bold"></span><span onclick="closeTutorial()" style="cursor:pointer;font-size:20px;color:#666">×</span></div>
+      <p id="tut-content" style="margin-top:12px;line-height:1.8;color:#ccc"></p>
+      <div id="tut-formula" class="formula-box" style="display:none"><span class="sm up">公式</span><pre id="tut-formula-text" style="margin-top:4px;color:#e0e0e0;white-space:pre-wrap"></pre></div>
+      <button class="btn btn-long mt12" onclick="closeTutorial()">我知道了</button>
+    </div>
+  </div>
+
+  <!-- Tab bar -->
+  <div class="tab-bar">
+    <div class="tab active" onclick="switchTab('market')">行情</div>
+    <div class="tab" onclick="switchTab('trade')">交易</div>
+    <div class="tab" onclick="switchTab('position')">持仓</div>
+    <div class="tab" onclick="switchTab('history')">历史</div>
+    <div class="tab" onclick="switchTab('profile')">我的</div>
+  </div>
+</div>
+
+<script>
+const BASE = 'https://learnfuture.cc'
+let token = localStorage.getItem('token') || ''
+let state = { side: 1, leverage: 10 }
+let klineData = [] // store for crosshair lookup
+let klineDrawParams = {} // store draw params for crosshair overlay
+
+// === API ===
+async function api(method, path, body) {
+  const opts = { method, headers: { 'Content-Type': 'application/json' } }
+  if (token) opts.headers['Authorization'] = 'Bearer ' + token
+  if (body) opts.body = JSON.stringify(body)
+  try {
+    const res = await fetch(BASE + path, opts)
+    const data = await res.json()
+    if (data.tutorial) showTutorial(data.tutorial)
+    if (data.code === 0) return data.data
+    throw new Error(data.message)
+  } catch(e) { console.error(path, e); throw e }
+}
+const GET = (p) => api('GET', p)
+const POST = (p, b) => api('POST', p, b)
+
+// === Login (auto) ===
+async function autoLogin() {
+  if (token) return
+  try {
+    // 用设备指纹或随机ID作为临时登录
+    const deviceId = localStorage.getItem('deviceId') || ('h5_' + Math.random().toString(36).substr(2, 12))
+    localStorage.setItem('deviceId', deviceId)
+    const data = await POST('/api/v1/auth/wx-login', { code: 'dev_' + deviceId })
+    token = data.token
+    localStorage.setItem('token', token)
+  } catch(e) {
+    console.log('Auto login failed, using public APIs only')
+  }
+}
+
+// === Tab Switch ===
+function switchTab(name) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'))
+  document.getElementById('page-' + name).classList.add('active')
+  document.querySelectorAll('.tab-bar .tab').forEach((t, i) => {
+    t.classList.toggle('active', ['market','trade','position','history','profile'][i] === name)
+  })
+  if (name === 'market') loadMarket()
+  if (name === 'trade') loadTradeInfo()
+  if (name === 'position') loadPositions()
+  if (name === 'profile') loadProfile()
+  // learn page doesn't need tab bar highlight
+}
+
+// === Market Page ===
+async function loadMarket() {
+  try {
+    const [price, mark, fund, depth] = await Promise.all([
+      GET('/api/v1/market/price'),
+      GET('/api/v1/market/mark-price'),
+      GET('/api/v1/market/funding-rate'),
+      GET('/api/v1/market/depth?limit=5'),
+    ])
+    const p = parseFloat(price.price)
+    document.getElementById('price').textContent = price.price
+    document.getElementById('price').className = 'price-big ' + (parseFloat(price.change) >= 0 ? 'up' : 'down')
+    document.getElementById('change').textContent = price.change + '%'
+    document.getElementById('high').textContent = price.high
+    document.getElementById('low').textContent = price.low
+    document.getElementById('mark-price').textContent = mark.mark_price
+    document.getElementById('index-price').textContent = mark.index_price
+    document.getElementById('basis').textContent = (parseFloat(mark.basis) * 100).toFixed(4) + '%'
+    document.getElementById('funding-rate').textContent = (parseFloat(fund.rate) * 100).toFixed(4) + '%'
+    const next = new Date(fund.next_settle * 1000)
+    document.getElementById('next-settle').textContent = next.toLocaleTimeString()
+    document.getElementById('trade-price').textContent = price.price
+
+    // Insurance fund
+    try {
+      const ins = await GET('/api/v1/market/insurance-fund')
+      document.getElementById('insurance-fund').textContent = ins.balance + ' USDT'
+    } catch(e) {}
+
+    // Depth
+    let bidsHtml = '', asksHtml = ''
+    depth.bids.forEach(b => { bidsHtml += `<div class="depth-row"><span class="up">${parseFloat(b.price).toFixed(1)}</span><span>${parseFloat(b.quantity).toFixed(3)}</span></div>` })
+    depth.asks.forEach(a => { asksHtml += `<div class="depth-row"><span class="down">${parseFloat(a.price).toFixed(1)}</span><span>${parseFloat(a.quantity).toFixed(3)}</span></div>` })
+    document.getElementById('depth-bids').innerHTML = bidsHtml || '<span class="muted sm">--</span>'
+    document.getElementById('depth-asks').innerHTML = asksHtml || '<span class="muted sm">--</span>'
+  } catch(e) { console.error('loadMarket:', e) }
+}
+
+// === Trade Page ===
+function setSide(s) {
+  state.side = s
+  const tabs = document.querySelectorAll('#side-tabs .t')
+  tabs[0].className = 't' + (s === 1 ? ' active-long' : '')
+  tabs[1].className = 't' + (s === -1 ? ' active-short' : '')
+  const btn = document.getElementById('place-btn')
+  btn.className = 'btn mt12 ' + (s === 1 ? 'btn-long' : 'btn-short')
+  btn.textContent = s === 1 ? '开多 买入/做多' : '开空 卖出/做空'
+  recalc()
+}
+
+function onLeverage(v) {
+  state.leverage = parseInt(v)
+  document.getElementById('lev-display').textContent = v + 'x'
+  recalc()
+}
+
+function recalc() {
+  const margin = parseFloat(document.getElementById('margin-input').value) || 0
+  const price = parseFloat(document.getElementById('trade-price').textContent) || 0
+  const lev = state.leverage
+  const detail = document.getElementById('calc-detail')
+  if (margin <= 0 || price <= 0) { detail.style.display = 'none'; return }
+  detail.style.display = 'block'
+
+  const posVal = margin * lev
+  const qty = posVal / price
+  const fee = posVal * 0.0004
+  const side = state.side
+  const liqPrice = side === 1 ? price * (1 - 1/lev) / (1 - 0.005) : price * (1 + 1/lev) / (1 + 0.005)
+  const ftpPrice = side === 1 ? price * (1 + 5/lev) : price * (1 - 5/lev)
+
+  document.getElementById('calc-rows').innerHTML = `
+    <div class="calc-row"><span class="muted term">仓位价值<span class="term-tip">保证金×杠杆=你实际控制的资产规模。仓位价值越大，盈亏绝对值越大</span></span><span>${margin} × ${lev} = ${posVal.toFixed(2)} USDT</span></div>
+    <div class="calc-row"><span class="muted term">开仓数量<span class="term-tip">仓位价值÷当前价格=你持有多少BTC的合约头寸（不是真的持有BTC）</span></span><span>${qty.toFixed(8)} BTC</span></div>
+    <div class="calc-row"><span class="muted term">手续费(Taker)<span class="term-tip">市价单=Taker（吃单，费率0.04%）。限价单=Maker（挂单，费率0.02%，甚至返佣）。开仓和平仓各收一次</span></span><span>${fee.toFixed(4)} USDT</span></div>
+    <div class="calc-row"><span class="muted term">强平价<span class="term-tip">保证金率降到0.5%时被强制平仓，亏掉全部保证金。杠杆越高，强平价离开仓价越近。建议设止损在强平价之前</span></span><span class="down">${liqPrice.toFixed(2)}</span></div>
+    <div class="calc-row"><span class="muted term">强盈价<span class="term-tip">收益率达500%时被强制止盈。模拟对手方LP的风控上限——做市商不会让你无限赚下去。真实交易所对应ADL（自动减仓）机制</span></span><span class="up">${ftpPrice.toFixed(2)}</span></div>
+  `
+}
+
+async function loadTradeInfo() {
+  try {
+    const price = await GET('/api/v1/market/price')
+    document.getElementById('trade-price').textContent = price.price
+    if (token) {
+      const acct = await GET('/api/v1/account/info')
+      document.getElementById('available').textContent = acct.available
+    }
+  } catch(e) {}
+  recalc()
+}
+
+async function placeOrder() {
+  const margin = document.getElementById('margin-input').value
+  if (!margin || parseFloat(margin) <= 0) { alert('请输入保证金'); return }
+  if (!token) { await autoLogin(); if (!token) { alert('请先登录'); return } }
+
+  try {
+    const data = await POST('/api/v1/order/place', {
+      side: state.side, order_type: 1, leverage: state.leverage, margin: margin
+    })
+    alert(data.status === 'filled' ? '开仓成功！' : '挂单成功！')
+    document.getElementById('margin-input').value = ''
+    document.getElementById('calc-detail').style.display = 'none'
+    loadTradeInfo()
+  } catch(e) { alert('下单失败: ' + e.message) }
+}
+
+// === Position Page ===
+async function loadPositions() {
+  if (!token) { document.getElementById('positions-list').innerHTML = '<div class="loading">请先交易以创建账户</div>'; return }
+  try {
+    const data = await GET('/api/v1/position/list')
+    const list = data.positions || []
+    if (list.length === 0) { document.getElementById('positions-list').innerHTML = '<div class="loading">暂无持仓</div>'; return }
+
+    let html = ''
+    list.forEach(p => {
+      const upnlClass = parseFloat(p.unrealized_pnl) >= 0 ? 'up' : 'down'
+      html += `<div class="card">
+        <div class="flex between center">
+          <div><span class="bold">BTC/USDT</span> <span class="pos-badge ${p.side===1?'bg-up':'bg-down'}">${p.side===1?'多':'空'} ${p.leverage}x</span></div>
+        </div>
+        <div class="flex between mt8">
+          <div class="stat"><span class="muted sm">未实现盈亏</span><span class="${upnlClass} bold">${p.unrealized_pnl} USDT</span></div>
+          <div class="stat"><span class="muted sm">收益率</span><span class="${upnlClass}">${p.roi}%</span></div>
+        </div>
+        <div class="divider"></div>
+        <div class="calc-row"><span class="muted">开仓价</span><span>${p.entry_price}</span></div>
+        <div class="calc-row"><span class="muted">数量</span><span>${p.quantity} BTC</span></div>
+        <div class="calc-row"><span class="muted">保证金</span><span>${p.margin} USDT</span></div>
+        <div class="calc-row"><span class="muted">强平价</span><span class="down">${p.liq_price}</span></div>
+        <div class="calc-row"><span class="muted">强盈价</span><span class="up">${p.force_tp_price}</span></div>
+        <div class="mt8" style="text-align:right"><button class="btn btn-short" style="width:auto;padding:8px 24px" onclick="closePos(${p.id})">平仓</button></div>
+      </div>`
+    })
+    document.getElementById('positions-list').innerHTML = html
+  } catch(e) { console.error(e) }
+}
+
+async function closePos(id) {
+  if (!confirm('确定平仓？')) return
+  try {
+    const data = await POST('/api/v1/position/close', { position_id: id })
+    alert('平仓成功！净盈亏: ' + data.net_pnl + ' USDT')
+    loadPositions()
+  } catch(e) { alert('平仓失败: ' + e.message) }
+}
+
+// === Profile Page ===
+async function loadProfile() {
+  if (!token) return
+  try {
+    const data = await GET('/api/v1/account/info')
+    document.getElementById('balance').textContent = data.balance
+    document.getElementById('prof-available').textContent = data.available
+    document.getElementById('prof-frozen').textContent = data.frozen
+    document.getElementById('prof-pnl').textContent = data.total_pnl
+    document.getElementById('prof-pnl').className = parseFloat(data.total_pnl) >= 0 ? 'up' : 'down'
+  } catch(e) {}
+}
+
+async function resetAccount() {
+  if (!confirm('将清空所有数据，余额重置为10,000 USDT，确定？')) return
+  try {
+    await POST('/api/v1/account/reset')
+    alert('重置成功')
+    loadProfile()
+  } catch(e) { alert('重置失败: ' + e.message) }
+}
+
+// === Tutorial ===
+function showTutorial(t) {
+  document.getElementById('tut-title').textContent = '📖 ' + t.title
+  document.getElementById('tut-content').textContent = t.content
+  if (t.formula) {
+    document.getElementById('tut-formula').style.display = 'block'
+    document.getElementById('tut-formula-text').textContent = t.formula
+  } else {
+    document.getElementById('tut-formula').style.display = 'none'
+  }
+  document.getElementById('tutorial-overlay').style.display = 'flex'
+}
+function closeTutorial() {
+  document.getElementById('tutorial-overlay').style.display = 'none'
+  localStorage.setItem('welcomed', '1')
+}
+
+// === WebSocket ===
+function connectWS() {
+  if (!token) return
+  const ws = new WebSocket(BASE.replace('https','wss') + '/ws?token=' + token)
+  ws.onmessage = (e) => {
+    const msg = JSON.parse(e.data)
+    if (msg.type === 'ticker') {
+      document.getElementById('price').textContent = msg.data.p
+      document.getElementById('trade-price').textContent = msg.data.p
+    }
+  }
+  ws.onclose = () => setTimeout(connectWS, 3000)
+}
+
+// === K-line ===
+let currentKlineInterval = '1m'
+
+function drawKlines(klines) {
+  klineData = klines || []
+  const canvas = document.getElementById('kline-canvas')
+  const dpr = window.devicePixelRatio || 1
+  const rect = canvas.getBoundingClientRect()
+  canvas.width = rect.width * dpr
+  canvas.height = rect.height * dpr
+  const ctx = canvas.getContext('2d')
+  ctx.scale(dpr, dpr)
+  const W = rect.width, H = rect.height
+
+  ctx.fillStyle = '#0f0f23'
+  ctx.fillRect(0, 0, W, H)
+
+  if (!klines || klines.length === 0) {
+    ctx.fillStyle = '#666'
+    ctx.font = '13px sans-serif'
+    ctx.textAlign = 'center'
+    ctx.fillText('暂无K线数据', W/2, H/2)
+    return
+  }
+
+  // Find price range
+  let minP = Infinity, maxP = -Infinity
+  klines.forEach(k => {
+    const h = parseFloat(k.high), l = parseFloat(k.low)
+    if (h > maxP) maxP = h
+    if (l < minP) minP = l
+  })
+  const padding = (maxP - minP) * 0.1 || 10
+  minP -= padding; maxP += padding
+  const priceRange = maxP - minP
+
+  const barW = Math.max(2, (W - 20) / klines.length - 1)
+  const gap = 1
+
+  // Store for crosshair
+  klineDrawParams = { W, H, minP, maxP, priceRange, barW, gap }
+
+  // Draw price labels
+  ctx.fillStyle = '#444'
+  ctx.font = '10px sans-serif'
+  ctx.textAlign = 'right'
+  for (let i = 0; i <= 4; i++) {
+    const p = minP + priceRange * i / 4
+    const y = H - (p - minP) / priceRange * (H - 20) - 10
+    ctx.fillText(p.toFixed(0), W - 2, y + 3)
+    ctx.strokeStyle = '#1a1a2e'
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W - 40, y); ctx.stroke()
+  }
+
+  // Draw candles
+  klines.forEach((k, i) => {
+    const o = parseFloat(k.open), c = parseFloat(k.close)
+    const h = parseFloat(k.high), l = parseFloat(k.low)
+    const isUp = c >= o
+    const color = isUp ? '#00d4aa' : '#ff4d6a'
+
+    const x = 10 + i * (barW + gap)
+    const yHigh = H - (h - minP) / priceRange * (H - 20) - 10
+    const yLow = H - (l - minP) / priceRange * (H - 20) - 10
+    const yOpen = H - (o - minP) / priceRange * (H - 20) - 10
+    const yClose = H - (c - minP) / priceRange * (H - 20) - 10
+
+    // Wick
+    ctx.strokeStyle = color
+    ctx.lineWidth = 1
+    ctx.beginPath()
+    ctx.moveTo(x + barW/2, yHigh)
+    ctx.lineTo(x + barW/2, yLow)
+    ctx.stroke()
+
+    // Body
+    ctx.fillStyle = color
+    const bodyTop = Math.min(yOpen, yClose)
+    const bodyH = Math.max(Math.abs(yOpen - yClose), 1)
+    ctx.fillRect(x, bodyTop, barW, bodyH)
+  })
+
+  // Close price line (smooth MA-like overlay)
+  ctx.strokeStyle = 'rgba(255,255,255,0.3)'
+  ctx.lineWidth = 1.5
+  ctx.beginPath()
+  klines.forEach((k, i) => {
+    const c = parseFloat(k.close)
+    const x = 10 + i * (barW + gap) + barW/2
+    const y = H - (c - minP) / priceRange * (H - 20) - 10
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y)
+  })
+  ctx.stroke()
+
+  // Current price line (dashed)
+  if (klines.length > 0) {
+    const lastClose = parseFloat(klines[klines.length - 1].close)
+    const y = H - (lastClose - minP) / priceRange * (H - 20) - 10
+    ctx.strokeStyle = '#00d4aa'
+    ctx.lineWidth = 1
+    ctx.setLineDash([4, 3])
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W - 40, y); ctx.stroke()
+    ctx.setLineDash([])
+    ctx.fillStyle = '#00d4aa'
+    ctx.font = '10px sans-serif'
+    ctx.textAlign = 'left'
+    ctx.fillText(lastClose.toFixed(1), 2, y - 4)
+  }
+}
+
+async function loadKlines(interval) {
+  currentKlineInterval = interval
+  // Update tab style
+  document.querySelectorAll('#kline-tabs span').forEach(s => {
+    s.style.background = s.dataset.interval === interval ? '#00d4aa' : '#0f0f23'
+    s.style.color = s.dataset.interval === interval ? '#fff' : '#999'
+  })
+  try {
+    const data = await GET('/api/v1/market/klines?interval=' + interval + '&limit=200')
+    const klines = (data.klines || []).reverse() // API returns newest first
+    drawKlines(klines)
+  } catch(e) {
+    console.error('loadKlines:', e)
+    drawKlines([])
+  }
+}
+
+// === Init ===
+// === Learn Page ===
+function expandTopic(n) {
+  const detail = document.getElementById('detail-' + n)
+  const arrow = document.getElementById('arrow-' + n)
+  if (detail.style.display === 'none') {
+    detail.style.display = 'block'
+    arrow.textContent = '▾'
+  } else {
+    detail.style.display = 'none'
+    arrow.textContent = '▸'
+  }
+}
+
+// === K-line Crosshair ===
+function setupKlineCrosshair() {
+  const canvas = document.getElementById('kline-canvas')
+  const tooltip = document.getElementById('kline-tooltip')
+
+  function onPointer(e) {
+    e.preventDefault()
+    if (!klineData.length || !klineDrawParams.W) return
+    const rect = canvas.getBoundingClientRect()
+    const x = (e.touches ? e.touches[0].clientX : e.clientX) - rect.left
+    const { barW, gap } = klineDrawParams
+    const idx = Math.floor((x - 10) / (barW + gap))
+    if (idx < 0 || idx >= klineData.length) { tooltip.textContent = ''; return }
+
+    const k = klineData[idx]
+    const t = new Date(k.open_time)
+    const timeStr = t.toLocaleString('zh-CN', { month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', second:'2-digit' })
+    const isUp = parseFloat(k.close) >= parseFloat(k.open)
+    tooltip.innerHTML = `<span style="color:${isUp?'#00d4aa':'#ff4d6a'}">${timeStr}</span>` +
+      ` 开<b>${parseFloat(k.open).toFixed(1)}</b>` +
+      ` 高<b>${parseFloat(k.high).toFixed(1)}</b>` +
+      ` 低<b>${parseFloat(k.low).toFixed(1)}</b>` +
+      ` 收<b style="color:${isUp?'#00d4aa':'#ff4d6a'}">${parseFloat(k.close).toFixed(1)}</b>`
+  }
+
+  canvas.addEventListener('mousemove', onPointer)
+  canvas.addEventListener('touchmove', onPointer)
+  canvas.addEventListener('mouseleave', () => { tooltip.textContent = '' })
+  canvas.addEventListener('touchend', () => { tooltip.textContent = '' })
+}
+
+// === Init ===
+async function init() {
+  // K-line tabs
+  const klineTabsDiv = document.getElementById('kline-tabs')
+  ;['1s','5s','15s','1m','5m','15m','1h','4h','1d'].forEach(v => {
+    const s = document.createElement('span')
+    s.textContent = v
+    s.dataset.interval = v
+    s.style.cssText = 'padding:4px 10px;border-radius:4px;cursor:pointer;font-size:12px;' +
+      (v === '1m' ? 'background:#00d4aa;color:#fff' : 'background:#0f0f23;color:#999')
+    s.onclick = () => loadKlines(v)
+    klineTabsDiv.appendChild(s)
+  })
+  setupKlineCrosshair()
+
+  // Leverage presets
+  const presetsDiv = document.getElementById('lev-presets');
+  [1,5,10,20,50,100].forEach(v => {
+    const s = document.createElement('span')
+    s.textContent = v + 'x'
+    s.onclick = () => { document.getElementById('leverage-slider').value = v; onLeverage(v) }
+    presetsDiv.appendChild(s)
+  })
+
+  loadMarket()
+  loadKlines('1m')
+  await autoLogin()
+  if (token) connectWS()
+
+  // Welcome tutorial for first-time users
+  if (!localStorage.getItem('welcomed')) {
+    showTutorial({
+      title: '欢迎来到合约模拟学习平台',
+      content: '这是一个永续合约模拟交易平台，使用虚拟资金（10,000 USDT）体验真实的合约交易流程。\n\n' +
+        '📈 行情页：查看BTC实时价格、K线、订单簿深度\n' +
+        '💰 交易页：开多（看涨）或开空（看跌）\n' +
+        '📊 持仓页：查看持仓盈亏、平仓\n\n' +
+        '每一步操作都会弹出教学卡片，帮你理解永续合约的核心概念。现在就试试吧！',
+      formula: '核心公式:\n未实现盈亏 = (当前价 - 开仓价) × 数量 × 方向\n保证金 = 仓位价值 / 杠杆倍数'
+    })
+  }
+
+  // Auto refresh
+  setInterval(loadMarket, 5000)
+  setInterval(() => loadKlines(currentKlineInterval), 10000)
+}
+
+init()
+</script>
+</body>
+</html>

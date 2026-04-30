@@ -22,6 +22,13 @@ Page({
   },
 
   onLoad() {
+    console.log('[Market] onLoad, baseURL:', getApp().globalData.baseURL)
+    // 直接测试请求
+    wx.request({
+      url: 'https://learnfuture.cc/api/v1/market/price',
+      success: (res) => console.log('[Market] direct request success:', JSON.stringify(res.data)),
+      fail: (err) => console.error('[Market] direct request fail:', JSON.stringify(err))
+    })
     this.loadPrice()
     this.loadMarkPrice()
     this.loadFundingRate()
@@ -30,7 +37,7 @@ Page({
 
   onShow() {
     wsManager.connect()
-    wsManager.on('ticker', this.onTicker.bindthis)
+    wsManager.on('ticker', this.onTicker.bind(this))
   },
 
   onHide() {
@@ -57,7 +64,7 @@ Page({
         high: data.high,
         low: data.low,
       })
-    })
+    }).catch(err => console.error('[Market] loadPrice failed:', err))
   },
 
   loadMarkPrice() {
@@ -67,7 +74,7 @@ Page({
         indexPrice: parseFloat(data.index_price).toFixed(2),
         basis: (parseFloat(data.basis) * 100).toFixed(4),
       })
-    })
+    }).catch(err => console.error('[Market] loadMarkPrice failed:', err))
   },
 
   loadFundingRate() {
@@ -80,13 +87,13 @@ Page({
         fundingRate: rate,
         nextSettle: hh + ':' + mm + ' UTC'
       })
-    })
+    }).catch(err => console.error('[Market] loadFundingRate failed:', err))
   },
 
   loadInsuranceFund() {
     request.get('/api/v1/market/insurance-fund').then(data => {
       this.setData({ insuranceFund: data.balance })
-    })
+    }).catch(err => console.error('[Market] loadInsuranceFund failed:', err))
   },
 
   switchInterval(e) {

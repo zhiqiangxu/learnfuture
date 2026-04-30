@@ -1,6 +1,5 @@
-const app = getApp()
-
 function request(url, method, data) {
+  const app = getApp()
   return new Promise((resolve, reject) => {
     wx.request({
       url: app.globalData.baseURL + url,
@@ -35,6 +34,7 @@ function request(url, method, data) {
 }
 
 function refreshAndRetry(url, method, data) {
+  const app = getApp()
   return new Promise((resolve, reject) => {
     wx.request({
       url: app.globalData.baseURL + '/api/v1/auth/refresh',

@@ -36,10 +36,16 @@ func (l *AuthLogic) WxLogin(req *types.WxLoginReq) (*types.WxLoginResp, *types.T
 		return nil, nil, errors.New("code is required")
 	}
 
-	// Exchange code for openid via WeChat API
-	openID, err := l.getOpenID(req.Code)
-	if err != nil {
-		return nil, nil, err
+	// Dev mode: code starting with "dev_" uses code as openID directly (for H5/testing)
+	var openID string
+	if len(req.Code) > 4 && req.Code[:4] == "dev_" {
+		openID = req.Code
+	} else {
+		var err error
+		openID, err = l.getOpenID(req.Code)
+		if err != nil {
+			return nil, nil, err
+		}
 	}
 
 	// Find or create user

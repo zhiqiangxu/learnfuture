@@ -30,3 +30,5 @@ Thumbs.db
 # WeChat devtools
 miniprogram/node_modules/
 miniprogram/miniprogram_npm/
+miniprogram/private.key
+miniprogram/preview-qrcode.jpg

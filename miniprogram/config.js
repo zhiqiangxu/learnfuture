@@ -13,6 +13,6 @@ const config = {
 }
 
 // 切换环境: 'dev' 或 'prod'
-const env = 'dev'
+const env = 'prod'
 
 module.exports = config[env]
