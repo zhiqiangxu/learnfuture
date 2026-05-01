@@ -114,8 +114,8 @@
     <!-- K线图 -->
     <div class="card">
       <div class="flex gap4" style="margin-bottom:8px;flex-wrap:wrap" id="kline-tabs"></div>
-      <div id="kline-tooltip" style="font-size:11px;color:#999;margin-bottom:4px;height:14px"></div>
-      <canvas id="kline-canvas" width="460" height="260" style="width:100%;height:200px;background:#0f0f23;border-radius:8px;touch-action:none"></canvas>
+      <div id="kline-tooltip" style="font-size:11px;color:#bbb;margin-bottom:4px;height:16px;font-family:-apple-system,monospace;letter-spacing:0.3px"></div>
+      <canvas id="kline-canvas" style="width:100%;height:360px;background:#0d0d1f;border-radius:8px;display:block;touch-action:none"></canvas>
     </div>
 
     <!-- 订单簿深度 -->
@@ -165,6 +165,18 @@
       <div class="t" onclick="setSide(-1)">开空 (看跌)</div>
     </div>
 
+    <!-- 订单类型 -->
+    <div class="flex gap8" style="margin-bottom:12px">
+      <span id="ot-market" class="term" style="padding:6px 16px;background:#3a3a5a;color:#fff;border-radius:6px;cursor:pointer;font-size:13px" onclick="setOrderType(1)">市价单<span class="term-tip">以当前最优价格立即成交。保证成交但可能有滑点。手续费按 Taker 费率(0.04%)</span></span>
+      <span id="ot-limit" class="term" style="padding:6px 16px;background:#2a2a4a;color:#999;border-radius:6px;cursor:pointer;font-size:13px" onclick="setOrderType(2)">限价单<span class="term-tip">你指定价格，到了才成交。价格更好，手续费更低(Maker 0.02%)，但可能不成交</span></span>
+    </div>
+
+    <!-- 限价输入 -->
+    <div class="input-group" id="limit-price-group" style="display:none">
+      <span class="input-label term">限价 (USDT)<span class="term-tip">你期望的成交价格。多单设低于当前价（更便宜买入），空单设高于当前价（更贵卖出）</span></span>
+      <input type="number" class="input-field" id="limit-price-input" placeholder="输入限价" oninput="recalc()">
+    </div>
+
     <div class="card">
       <div class="flex between center">
         <span class="term">杠杆倍数<span class="term-tip">用少量保证金控制更大仓位。10x=用100U控制1000U的仓位。杠杆放大收益也放大亏损，杠杆越高离强平越近</span></span>
@@ -197,7 +209,12 @@
 
   <!-- ===== 历史页 ===== -->
   <div id="page-history" class="page">
-    <div class="loading">登录后查看历史记录</div>
+    <div class="flex gap8" style="margin-bottom:12px">
+      <span id="ht-orders" style="padding:6px 16px;background:#3a3a5a;color:#fff;border-radius:6px;cursor:pointer;font-size:13px" onclick="loadHistory('orders')">订单</span>
+      <span id="ht-trades" style="padding:6px 16px;background:#2a2a4a;color:#999;border-radius:6px;cursor:pointer;font-size:13px" onclick="loadHistory('trades')">成交</span>
+      <span id="ht-pnl" style="padding:6px 16px;background:#2a2a4a;color:#999;border-radius:6px;cursor:pointer;font-size:13px" onclick="loadHistory('pnl')">盈亏</span>
+    </div>
+    <div id="history-list"><div class="loading">加载中...</div></div>
   </div>
 
   <!-- ===== 我的 ===== -->
@@ -409,9 +426,9 @@
 <script>
 const BASE = 'https://learnfuture.cc'
 let token = localStorage.getItem('token') || ''
-let state = { side: 1, leverage: 10 }
-let klineData = [] // store for crosshair lookup
-let klineDrawParams = {} // store draw params for crosshair overlay
+let state = { side: 1, leverage: 10, orderType: 1 }
+let suppressTutorial = false
+let klineData = [] // store for reference
 
 // === API ===
 async function api(method, path, body) {
@@ -421,7 +438,15 @@ async function api(method, path, body) {
   try {
     const res = await fetch(BASE + path, opts)
     const data = await res.json()
-    if (data.tutorial) showTutorial(data.tutorial)
+    if (data.code === 401 || data.message === 'invalid token') {
+      // Token expired, re-login automatically
+      token = ''
+      localStorage.removeItem('token')
+      await autoLogin()
+      if (token) return api(method, path, body) // retry
+      throw new Error('登录失败')
+    }
+    if (data.tutorial && !suppressTutorial) showTutorial(data.tutorial)
     if (data.code === 0) return data.data
     throw new Error(data.message)
   } catch(e) { console.error(path, e); throw e }
@@ -451,11 +476,12 @@ function switchTab(name) {
   document.querySelectorAll('.tab-bar .tab').forEach((t, i) => {
     t.classList.toggle('active', ['market','trade','position','history','profile'][i] === name)
   })
+  location.hash = name // save tab for refresh
   if (name === 'market') loadMarket()
   if (name === 'trade') loadTradeInfo()
   if (name === 'position') loadPositions()
+  if (name === 'history') loadHistory()
   if (name === 'profile') loadProfile()
-  // learn page doesn't need tab bar highlight
 }
 
 // === Market Page ===
@@ -497,6 +523,16 @@ async function loadMarket() {
 }
 
 // === Trade Page ===
+function setOrderType(t) {
+  state.orderType = t
+  document.getElementById('ot-market').style.background = t === 1 ? '#3a3a5a' : '#2a2a4a'
+  document.getElementById('ot-market').style.color = t === 1 ? '#fff' : '#999'
+  document.getElementById('ot-limit').style.background = t === 2 ? '#3a3a5a' : '#2a2a4a'
+  document.getElementById('ot-limit').style.color = t === 2 ? '#fff' : '#999'
+  document.getElementById('limit-price-group').style.display = t === 2 ? 'block' : 'none'
+  recalc()
+}
+
 function setSide(s) {
   state.side = s
   const tabs = document.querySelectorAll('#side-tabs .t')
@@ -516,25 +552,64 @@ function onLeverage(v) {
 
 function recalc() {
   const margin = parseFloat(document.getElementById('margin-input').value) || 0
-  const price = parseFloat(document.getElementById('trade-price').textContent) || 0
+  const marketPrice = parseFloat(document.getElementById('trade-price').textContent) || 0
+  const limitPriceVal = parseFloat(document.getElementById('limit-price-input').value) || 0
+  const price = state.orderType === 2 && limitPriceVal > 0 ? limitPriceVal : marketPrice
   const lev = state.leverage
   const detail = document.getElementById('calc-detail')
   if (margin <= 0 || price <= 0) { detail.style.display = 'none'; return }
   detail.style.display = 'block'
 
+  const isMaker = state.orderType === 2
   const posVal = margin * lev
   const qty = posVal / price
-  const fee = posVal * 0.0004
+  const feeRate = isMaker ? 0.0002 : 0.0004
+  const feeTypeStr = isMaker ? 'Maker 0.02%' : 'Taker 0.04%'
+  const fee = posVal * feeRate
   const side = state.side
-  const liqPrice = side === 1 ? price * (1 - 1/lev) / (1 - 0.005) : price * (1 + 1/lev) / (1 + 0.005)
+  const maintRate = 0.005
+  const liqPrice = side === 1 ? price * (1 - 1/lev) / (1 - maintRate) : price * (1 + 1/lev) / (1 + maintRate)
   const ftpPrice = side === 1 ? price * (1 + 5/lev) : price * (1 - 5/lev)
+  const sideStr = side === 1 ? '多' : '空'
+  const liqFormula = side === 1
+    ? `${price.toFixed(2)} × (1 - 1/${lev}) / (1 - ${maintRate}) = ${price.toFixed(2)} × ${(1-1/lev).toFixed(4)} / ${(1-maintRate).toFixed(4)}`
+    : `${price.toFixed(2)} × (1 + 1/${lev}) / (1 + ${maintRate}) = ${price.toFixed(2)} × ${(1+1/lev).toFixed(4)} / ${(1+maintRate).toFixed(4)}`
+  const ftpFormula = side === 1
+    ? `${price.toFixed(2)} × (1 + 5/${lev}) = ${price.toFixed(2)} × ${(1+5/lev).toFixed(4)}`
+    : `${price.toFixed(2)} × (1 - 5/${lev}) = ${price.toFixed(2)} × ${(1-5/lev).toFixed(4)}`
+  const liqDist = Math.abs(price - liqPrice) / price * 100
 
   document.getElementById('calc-rows').innerHTML = `
-    <div class="calc-row"><span class="muted term">仓位价值<span class="term-tip">保证金×杠杆=你实际控制的资产规模。仓位价值越大，盈亏绝对值越大</span></span><span>${margin} × ${lev} = ${posVal.toFixed(2)} USDT</span></div>
-    <div class="calc-row"><span class="muted term">开仓数量<span class="term-tip">仓位价值÷当前价格=你持有多少BTC的合约头寸（不是真的持有BTC）</span></span><span>${qty.toFixed(8)} BTC</span></div>
-    <div class="calc-row"><span class="muted term">手续费(Taker)<span class="term-tip">市价单=Taker（吃单，费率0.04%）。限价单=Maker（挂单，费率0.02%，甚至返佣）。开仓和平仓各收一次</span></span><span>${fee.toFixed(4)} USDT</span></div>
-    <div class="calc-row"><span class="muted term">强平价<span class="term-tip">保证金率降到0.5%时被强制平仓，亏掉全部保证金。杠杆越高，强平价离开仓价越近。建议设止损在强平价之前</span></span><span class="down">${liqPrice.toFixed(2)}</span></div>
-    <div class="calc-row"><span class="muted term">强盈价<span class="term-tip">收益率达500%时被强制止盈。模拟对手方LP的风控上限——做市商不会让你无限赚下去。真实交易所对应ADL（自动减仓）机制</span></span><span class="up">${ftpPrice.toFixed(2)}</span></div>
+    <div class="formula-box" style="margin-bottom:8px">
+      <div class="sm up">① 仓位价值 = 保证金 × 杠杆</div>
+      <div style="margin-top:4px">${margin} × ${lev} = <b>${posVal.toFixed(2)} USDT</b></div>
+    </div>
+    <div class="formula-box" style="margin-bottom:8px">
+      <div class="sm up">② 开仓数量 = 仓位价值 ÷ 当前价</div>
+      <div style="margin-top:4px">${posVal.toFixed(2)} ÷ ${price.toFixed(2)} = <b>${qty.toFixed(8)} BTC</b></div>
+    </div>
+    <div class="formula-box" style="margin-bottom:8px">
+      <div class="sm up">③ 手续费 = 仓位价值 × 费率(${feeTypeStr})</div>
+      <div style="margin-top:4px">${posVal.toFixed(2)} × ${feeRate} = <b>${fee.toFixed(4)} USDT</b></div>
+      <div class="muted sm" style="margin-top:2px">开仓+平仓各收一次，总共 ≈ ${(fee*2).toFixed(4)} USDT</div>
+    </div>
+    <div class="formula-box" style="margin-bottom:8px">
+      <div class="sm down">④ 强平价（${sideStr}仓）= 开仓价 × (1 ${side===1?'-':'+'}1/杠杆) / (1 ${side===1?'-':'+'}维持保证金率)</div>
+      <div style="margin-top:4px">${liqFormula}</div>
+      <div style="margin-top:2px">= <b class="down">${liqPrice.toFixed(2)}</b></div>
+      <div class="muted sm" style="margin-top:2px">距当前价 ${liqDist.toFixed(1)}%，价格${side===1?'跌':'涨'}${liqDist.toFixed(1)}%就爆仓</div>
+    </div>
+    <div class="formula-box" style="margin-bottom:8px">
+      <div class="sm up">⑤ 强盈价（${sideStr}仓）= 开仓价 × (1 ${side===1?'+':'-'} 5/杠杆)</div>
+      <div style="margin-top:4px">${ftpFormula}</div>
+      <div style="margin-top:2px">= <b class="up">${ftpPrice.toFixed(2)}</b></div>
+      <div class="muted sm" style="margin-top:2px">收益率达500%时触发，盈利自动入账</div>
+    </div>
+    <div class="formula-box">
+      <div class="sm" style="color:#ff9800">⑥ 总开仓成本 = 保证金 + 手续费</div>
+      <div style="margin-top:4px">${margin} + ${fee.toFixed(4)} = <b>${(margin+fee).toFixed(4)} USDT</b></div>
+      <div class="muted sm" style="margin-top:2px">从余额中扣除，平仓后归还保证金±盈亏</div>
+    </div>
   `
 }
 
@@ -553,14 +628,34 @@ async function loadTradeInfo() {
 async function placeOrder() {
   const margin = document.getElementById('margin-input').value
   if (!margin || parseFloat(margin) <= 0) { alert('请输入保证金'); return }
+  if (state.orderType === 2) {
+    const lp = document.getElementById('limit-price-input').value
+    if (!lp || parseFloat(lp) <= 0) { alert('请输入限价'); return }
+  }
   if (!token) { await autoLogin(); if (!token) { alert('请先登录'); return } }
 
   try {
-    const data = await POST('/api/v1/order/place', {
-      side: state.side, order_type: 1, leverage: state.leverage, margin: margin
-    })
-    alert(data.status === 'filled' ? '开仓成功！' : '挂单成功！')
+    const params = { side: state.side, order_type: state.orderType, leverage: state.leverage, margin: margin }
+    if (state.orderType === 2) params.price = document.getElementById('limit-price-input').value
+    // Suppress tutorial popup — show trade result instead
+    suppressTutorial = true
+    const data = await POST('/api/v1/order/place', params)
+    suppressTutorial = false
+
+    if (data.status === 'filled' && data.detail) {
+      const d = data.detail
+      showTutorial({
+        title: '✅ 开仓成功',
+        content: `方向: ${d.side}\n成交价: ${d.entry_price}\n数量: ${d.quantity} BTC\n仓位价值: ${d.position_value} USDT\n手续费: ${d.fee} USDT\n强平价: ${d.liq_price}\n强盈价: ${d.force_tp_price}`,
+        formula: d.formulas ? d.formulas.join('\n') : ''
+      })
+    } else if (data.status === 'pending') {
+      alert('限价单已挂出，等待成交')
+    } else {
+      alert('下单成功')
+    }
     document.getElementById('margin-input').value = ''
+    document.getElementById('limit-price-input').value = ''
     document.getElementById('calc-detail').style.display = 'none'
     loadTradeInfo()
   } catch(e) { alert('下单失败: ' + e.message) }
@@ -585,10 +680,12 @@ async function loadPositions() {
           <div class="stat"><span class="muted sm">未实现盈亏</span><span class="${upnlClass} bold">${p.unrealized_pnl} USDT</span></div>
           <div class="stat"><span class="muted sm">收益率</span><span class="${upnlClass}">${p.roi}%</span></div>
         </div>
+        <div class="calc-row" style="margin-top:4px"><span class="muted">净盈亏（含资金费）</span><span class="${parseFloat(p.unrealized_pnl)+parseFloat(p.funding_pnl||0)>=0?'up':'down'} bold">${(parseFloat(p.unrealized_pnl)+parseFloat(p.funding_pnl||0)).toFixed(2)} USDT</span></div>
         <div class="divider"></div>
         <div class="calc-row"><span class="muted">开仓价</span><span>${p.entry_price}</span></div>
         <div class="calc-row"><span class="muted">数量</span><span>${p.quantity} BTC</span></div>
         <div class="calc-row"><span class="muted">保证金</span><span>${p.margin} USDT</span></div>
+        <div class="calc-row"><span class="muted">累计资金费</span><span class="${parseFloat(p.funding_pnl||0)>=0?'up':'down'}">${p.funding_pnl||'0.00'} USDT</span></div>
         <div class="calc-row"><span class="muted">强平价</span><span class="down">${p.liq_price}</span></div>
         <div class="calc-row"><span class="muted">强盈价</span><span class="up">${p.force_tp_price}</span></div>
         <div class="mt8" style="text-align:right"><button class="btn btn-short" style="width:auto;padding:8px 24px" onclick="closePos(${p.id})">平仓</button></div>
@@ -605,6 +702,72 @@ async function closePos(id) {
     alert('平仓成功！净盈亏: ' + data.net_pnl + ' USDT')
     loadPositions()
   } catch(e) { alert('平仓失败: ' + e.message) }
+}
+
+// === History Page ===
+let historyTab = 'orders'
+async function loadHistory(tab) {
+  if (!token) { await autoLogin() }
+  historyTab = tab || 'orders'
+  ;['orders','trades','pnl'].forEach(t => {
+    const el = document.getElementById('ht-' + t)
+    el.style.background = t === historyTab ? '#3a3a5a' : '#2a2a4a'
+    el.style.color = t === historyTab ? '#fff' : '#999'
+  })
+  const list = document.getElementById('history-list')
+  if (!token) { list.innerHTML = '<div class="loading">请先交易以创建账户</div>'; return }
+
+  try {
+    if (historyTab === 'orders') {
+      const data = await GET('/api/v1/history/orders?page=1&page_size=20')
+      const orders = data.orders || []
+      if (orders.length === 0) { list.innerHTML = '<div class="loading">暂无订单</div>'; return }
+      let html = ''
+      orders.forEach(o => {
+        const sideStr = o.side === 1 ? '多' : '空'
+        const sideClass = o.side === 1 ? 'up' : 'down'
+        const statusMap = {1:'挂单中',2:'已成交',3:'已取消'}
+        html += `<div class="card">
+          <div class="flex between"><span class="${sideClass} bold">${sideStr} ${o.leverage}x</span><span class="muted sm">${statusMap[o.status]||o.status}</span></div>
+          <div class="calc-row"><span class="muted">保证金</span><span>${o.margin_cost} USDT</span></div>
+          ${o.filled_price ? `<div class="calc-row"><span class="muted">成交价</span><span>${o.filled_price}</span></div>` : ''}
+          <div class="calc-row"><span class="muted">时间</span><span class="sm">${new Date(o.created_at*1000).toLocaleString()}</span></div>
+        </div>`
+      })
+      list.innerHTML = html
+    } else if (historyTab === 'trades') {
+      const data = await GET('/api/v1/history/trades?page=1&page_size=20')
+      const trades = data.trades || []
+      if (trades.length === 0) { list.innerHTML = '<div class="loading">暂无成交</div>'; return }
+      let html = ''
+      trades.forEach(t => {
+        const sideStr = t.side === 1 ? '买入' : '卖出'
+        const sideClass = t.side === 1 ? 'up' : 'down'
+        const closeStr = t.is_close ? '平仓' : '开仓'
+        html += `<div class="card">
+          <div class="flex between"><span class="${sideClass}">${sideStr} (${closeStr})</span><span class="sm muted">${new Date(t.created_at*1000).toLocaleString()}</span></div>
+          <div class="calc-row"><span class="muted">价格</span><span>${t.price}</span></div>
+          <div class="calc-row"><span class="muted">数量</span><span>${t.quantity} BTC</span></div>
+          <div class="calc-row"><span class="muted">手续费</span><span>${t.fee} USDT</span></div>
+          ${t.is_close ? `<div class="calc-row"><span class="muted">盈亏</span><span class="${parseFloat(t.realized_pnl)>=0?'up':'down'}">${t.realized_pnl} USDT</span></div>` : ''}
+        </div>`
+      })
+      list.innerHTML = html
+    } else if (historyTab === 'pnl') {
+      const data = await GET('/api/v1/history/pnl')
+      list.innerHTML = `<div class="card">
+        <div class="calc-row"><span class="muted">总盈亏</span><span class="${parseFloat(data.total_pnl)>=0?'up':'down'} bold">${data.total_pnl} USDT</span></div>
+        <div class="divider"></div>
+        <div class="calc-row"><span class="muted">总手续费</span><span>${data.total_fee} USDT</span></div>
+        <div class="calc-row"><span class="muted">总资金费</span><span>${data.total_funding} USDT</span></div>
+        <div class="calc-row"><span class="muted">胜率</span><span>${data.win_rate}% (${data.win_count}胜/${data.loss_count}负)</span></div>
+        <div class="calc-row"><span class="muted">最佳交易</span><span class="up">${data.best_trade} USDT</span></div>
+        <div class="calc-row"><span class="muted">最差交易</span><span class="down">${data.worst_trade} USDT</span></div>
+        <div class="calc-row"><span class="muted">强平次数</span><span>${data.liquidated_count}</span></div>
+        <div class="calc-row"><span class="muted">强盈次数</span><span>${data.force_tp_count}</span></div>
+      </div>`
+    }
+  } catch(e) { list.innerHTML = '<div class="loading">加载失败</div>'; console.error(e) }
 }
 
 // === Profile Page ===
@@ -655,6 +818,7 @@ function connectWS() {
     if (msg.type === 'ticker') {
       document.getElementById('price').textContent = msg.data.p
       document.getElementById('trade-price').textContent = msg.data.p
+      // Real-time kline update — handled by periodic loadKlines refresh
     }
   }
   ws.onclose = () => setTimeout(connectWS, 3000)
@@ -663,9 +827,20 @@ function connectWS() {
 // === K-line ===
 let currentKlineInterval = '1m'
 
+// === Canvas K-line (zero-gap) ===
+function calcMA(closes, period) {
+  const r = []
+  for (let i = 0; i < closes.length; i++) {
+    if (i < period - 1) { r.push(null); continue }
+    let s = 0; for (let j = i - period + 1; j <= i; j++) s += closes[j]
+    r.push(s / period)
+  }
+  return r
+}
+
 function drawKlines(klines) {
-  klineData = klines || []
   const canvas = document.getElementById('kline-canvas')
+  if (!canvas) return
   const dpr = window.devicePixelRatio || 1
   const rect = canvas.getBoundingClientRect()
   canvas.width = rect.width * dpr
@@ -674,100 +849,148 @@ function drawKlines(klines) {
   ctx.scale(dpr, dpr)
   const W = rect.width, H = rect.height
 
-  ctx.fillStyle = '#0f0f23'
+  ctx.fillStyle = '#0d0d1f'
   ctx.fillRect(0, 0, W, H)
 
   if (!klines || klines.length === 0) {
-    ctx.fillStyle = '#666'
-    ctx.font = '13px sans-serif'
-    ctx.textAlign = 'center'
-    ctx.fillText('暂无K线数据', W/2, H/2)
-    return
+    ctx.fillStyle = '#555'; ctx.font = '13px sans-serif'; ctx.textAlign = 'center'
+    ctx.fillText('暂无K线数据', W / 2, H / 2); return
   }
 
-  // Find price range
+  // Sort, dedup, gap fill
+  const sorted = klines.slice().sort((a, b) => a.open_time - b.open_time)
+  const seen = new Set()
+  let data = sorted.filter(k => { if (seen.has(k.open_time)) return false; seen.add(k.open_time); return true })
+  const isSecondLevel = ['1s', '5s', '15s'].includes(currentKlineInterval)
+  if (!isSecondLevel && data.length > 1) {
+    const stepMap = { '1m': 60000, '5m': 300000, '15m': 900000, '1h': 3600000, '4h': 14400000, '1d': 86400000 }
+    const step = stepMap[currentKlineInterval] || 60000
+    const filled = [data[0]]
+    for (let i = 1; i < data.length; i++) {
+      const prev = data[i - 1], curr = data[i], gap = curr.open_time - prev.open_time
+      if (gap > step && gap <= step * 10) {
+        for (let t = prev.open_time + step; t < curr.open_time; t += step)
+          filled.push({ open_time: t, open: prev.close, high: prev.close, low: prev.close, close: prev.close })
+      }
+      filled.push(curr)
+    }
+    data = filled
+  }
+
+  // Layout
+  const rightM = 55, bottomM = 22, topM = 6
+  const chartW = W - rightM, chartH = H - bottomM - topM
+
+  // Calculate how many bars fit at minimum 10px each
+  const maxBars = Math.max(15, Math.floor(chartW / 10))
+  if (data.length > maxBars) data = data.slice(data.length - maxBars)
+  const barW = chartW / data.length  // float — fills chart exactly
+
+  const parsed = data.map(k => ({
+    o: parseFloat(k.open), c: parseFloat(k.close),
+    h: parseFloat(k.high), l: parseFloat(k.low), t: k.open_time
+  }))
+
+  // Price range
   let minP = Infinity, maxP = -Infinity
-  klines.forEach(k => {
-    const h = parseFloat(k.high), l = parseFloat(k.low)
-    if (h > maxP) maxP = h
-    if (l < minP) minP = l
-  })
-  const padding = (maxP - minP) * 0.1 || 10
-  minP -= padding; maxP += padding
-  const priceRange = maxP - minP
+  parsed.forEach(k => { if (k.h > maxP) maxP = k.h; if (k.l < minP) minP = k.l })
+  const pad = (maxP - minP) * 0.06 || 10
+  minP -= pad; maxP += pad
+  const range = maxP - minP
+  const toY = p => topM + chartH - (p - minP) / range * chartH
 
-  const barW = Math.max(2, (W - 20) / klines.length - 1)
-  const gap = 1
-
-  // Store for crosshair
-  klineDrawParams = { W, H, minP, maxP, priceRange, barW, gap }
-
-  // Draw price labels
-  ctx.fillStyle = '#444'
-  ctx.font = '10px sans-serif'
-  ctx.textAlign = 'right'
-  for (let i = 0; i <= 4; i++) {
-    const p = minP + priceRange * i / 4
-    const y = H - (p - minP) / priceRange * (H - 20) - 10
-    ctx.fillText(p.toFixed(0), W - 2, y + 3)
-    ctx.strokeStyle = '#1a1a2e'
-    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W - 40, y); ctx.stroke()
+  // Grid lines + price labels
+  ctx.textAlign = 'left'; ctx.font = '10px -apple-system,monospace'
+  for (let i = 0; i <= 5; i++) {
+    const p = minP + range * i / 5, y = toY(p)
+    ctx.strokeStyle = '#1a1a35'; ctx.lineWidth = 0.5; ctx.setLineDash([2, 3])
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(chartW, y); ctx.stroke()
+    ctx.setLineDash([]); ctx.fillStyle = '#555'; ctx.fillText(p.toFixed(1), chartW + 4, y + 3)
   }
 
-  // Draw candles
-  klines.forEach((k, i) => {
-    const o = parseFloat(k.open), c = parseFloat(k.close)
-    const h = parseFloat(k.high), l = parseFloat(k.low)
-    const isUp = c >= o
+  // Time labels
+  ctx.textAlign = 'center'; ctx.fillStyle = '#555'
+  const labelStep = Math.max(1, Math.floor(parsed.length / 6))
+  for (let i = 0; i < parsed.length; i += labelStep) {
+    const t = new Date(parsed[i].t)
+    const x = i * barW + barW / 2
+    ctx.fillText(t.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }), x, H - 5)
+  }
+
+  // MA lines
+  const closes = parsed.map(k => k.c)
+  const ma7 = calcMA(closes, 7), ma25 = calcMA(closes, 25)
+  const drawMA = (arr, color) => {
+    ctx.strokeStyle = color; ctx.lineWidth = 1; ctx.beginPath()
+    let started = false
+    arr.forEach((v, i) => {
+      if (v === null) return
+      const x = i * barW + barW / 2, y = toY(v)
+      if (!started) { ctx.moveTo(x, y); started = true } else ctx.lineTo(x, y)
+    })
+    ctx.stroke()
+  }
+  drawMA(ma7, 'rgba(247,181,0,0.8)')
+  drawMA(ma25, 'rgba(116,135,241,0.8)')
+
+  // === CANDLES ===
+  parsed.forEach((k, i) => {
+    const x = Math.round(i * barW)
+    const xNext = Math.round((i + 1) * barW)
+    const w = xNext - x
+    const isUp = k.c >= k.o
     const color = isUp ? '#00d4aa' : '#ff4d6a'
 
-    const x = 10 + i * (barW + gap)
-    const yHigh = H - (h - minP) / priceRange * (H - 20) - 10
-    const yLow = H - (l - minP) / priceRange * (H - 20) - 10
-    const yOpen = H - (o - minP) / priceRange * (H - 20) - 10
-    const yClose = H - (c - minP) / priceRange * (H - 20) - 10
+    const yH = toY(k.h), yL = toY(k.l)
+    const yO = toY(k.o), yC = toY(k.c)
+    const bodyTop = Math.min(yO, yC)
+    const bodyH = Math.max(Math.abs(yO - yC), 2)
 
-    // Wick
-    ctx.strokeStyle = color
-    ctx.lineWidth = 1
-    ctx.beginPath()
-    ctx.moveTo(x + barW/2, yHigh)
-    ctx.lineTo(x + barW/2, yLow)
-    ctx.stroke()
-
-    // Body
+    // Wick — thin centered line
     ctx.fillStyle = color
-    const bodyTop = Math.min(yOpen, yClose)
-    const bodyH = Math.max(Math.abs(yOpen - yClose), 1)
-    ctx.fillRect(x, bodyTop, barW, bodyH)
+    const wickW = Math.max(1, Math.round(w * 0.15))
+    ctx.fillRect(x + (w - wickW) / 2, yH, wickW, yL - yH)
+
+    // Body — full width, solid color, min 6px height
+    const bodyH2 = Math.max(bodyH, 6)
+    const bodyTop2 = isUp ? (yC - bodyH2 / 2) : (yO - bodyH2 / 2)
+    ctx.fillStyle = color
+    ctx.fillRect(x, bodyTop2, w + 1, bodyH2)
   })
 
-  // Close price line (smooth MA-like overlay)
-  ctx.strokeStyle = 'rgba(255,255,255,0.3)'
-  ctx.lineWidth = 1.5
-  ctx.beginPath()
-  klines.forEach((k, i) => {
-    const c = parseFloat(k.close)
-    const x = 10 + i * (barW + gap) + barW/2
-    const y = H - (c - minP) / priceRange * (H - 20) - 10
-    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y)
-  })
-  ctx.stroke()
-
-  // Current price line (dashed)
-  if (klines.length > 0) {
-    const lastClose = parseFloat(klines[klines.length - 1].close)
-    const y = H - (lastClose - minP) / priceRange * (H - 20) - 10
-    ctx.strokeStyle = '#00d4aa'
-    ctx.lineWidth = 1
-    ctx.setLineDash([4, 3])
-    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W - 40, y); ctx.stroke()
-    ctx.setLineDash([])
-    ctx.fillStyle = '#00d4aa'
-    ctx.font = '10px sans-serif'
-    ctx.textAlign = 'left'
-    ctx.fillText(lastClose.toFixed(1), 2, y - 4)
+  // Current price line
+  if (parsed.length > 0) {
+    const last = parsed[parsed.length - 1].c
+    const y = toY(last)
+    const isUp = parsed.length > 1 ? last >= parsed[parsed.length - 2].c : true
+    const col = isUp ? '#00d4aa' : '#ff4d6a'
+    ctx.strokeStyle = col; ctx.lineWidth = 0.8; ctx.setLineDash([3, 3])
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(chartW, y); ctx.stroke(); ctx.setLineDash([])
+    // Price tag
+    ctx.fillStyle = col
+    const tw = 56, th = 16, tx = chartW + 1, ty = y - th / 2
+    ctx.fillRect(tx, ty, tw, th)
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 10px -apple-system,monospace'; ctx.textAlign = 'center'
+    ctx.fillText(last.toFixed(1), tx + tw / 2, y + 4)
   }
+
+  // Tooltip setup
+  const tooltip = document.getElementById('kline-tooltip')
+  canvas.onmousemove = canvas.ontouchmove = function(e) {
+    e.preventDefault()
+    const r2 = canvas.getBoundingClientRect()
+    const mx = (e.touches ? e.touches[0].clientX : e.clientX) - r2.left
+    const idx = Math.floor(mx / barW)
+    if (idx < 0 || idx >= parsed.length) { tooltip.textContent = ''; return }
+    const k = parsed[idx]
+    const isUp = k.c >= k.o, col = isUp ? '#00d4aa' : '#ff4d6a'
+    const chg = ((k.c - k.o) / k.o * 100).toFixed(2)
+    const t = new Date(k.t)
+    tooltip.innerHTML = `<span style="color:${col}">${t.toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'})}</span>` +
+      ` O <b>${k.o.toFixed(1)}</b> H <b>${k.h.toFixed(1)}</b> L <b>${k.l.toFixed(1)}</b>` +
+      ` C <b style="color:${col}">${k.c.toFixed(1)}</b> <span style="color:${col}">${isUp?'+':''}${chg}%</span>`
+  }
+  canvas.onmouseleave = canvas.ontouchend = () => { tooltip.textContent = '' }
 }
 
 async function loadKlines(interval) {
@@ -778,7 +1001,10 @@ async function loadKlines(interval) {
     s.style.color = s.dataset.interval === interval ? '#fff' : '#999'
   })
   try {
-    const data = await GET('/api/v1/market/klines?interval=' + interval + '&limit=200')
+    // Smaller intervals need fewer bars to look good
+    const limitMap = { '1s': 60, '5s': 60, '15s': 60, '1m': 60, '5m': 80, '15m': 100, '1h': 168, '4h': 180, '1d': 365 }
+    const limit = limitMap[interval] || 100
+    const data = await GET('/api/v1/market/klines?interval=' + interval + '&limit=' + limit)
     const klines = (data.klines || []).reverse() // API returns newest first
     drawKlines(klines)
   } catch(e) {
@@ -803,33 +1029,7 @@ function expandTopic(n) {
 
 // === K-line Crosshair ===
 function setupKlineCrosshair() {
-  const canvas = document.getElementById('kline-canvas')
-  const tooltip = document.getElementById('kline-tooltip')
-
-  function onPointer(e) {
-    e.preventDefault()
-    if (!klineData.length || !klineDrawParams.W) return
-    const rect = canvas.getBoundingClientRect()
-    const x = (e.touches ? e.touches[0].clientX : e.clientX) - rect.left
-    const { barW, gap } = klineDrawParams
-    const idx = Math.floor((x - 10) / (barW + gap))
-    if (idx < 0 || idx >= klineData.length) { tooltip.textContent = ''; return }
-
-    const k = klineData[idx]
-    const t = new Date(k.open_time)
-    const timeStr = t.toLocaleString('zh-CN', { month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', second:'2-digit' })
-    const isUp = parseFloat(k.close) >= parseFloat(k.open)
-    tooltip.innerHTML = `<span style="color:${isUp?'#00d4aa':'#ff4d6a'}">${timeStr}</span>` +
-      ` 开<b>${parseFloat(k.open).toFixed(1)}</b>` +
-      ` 高<b>${parseFloat(k.high).toFixed(1)}</b>` +
-      ` 低<b>${parseFloat(k.low).toFixed(1)}</b>` +
-      ` 收<b style="color:${isUp?'#00d4aa':'#ff4d6a'}">${parseFloat(k.close).toFixed(1)}</b>`
-  }
-
-  canvas.addEventListener('mousemove', onPointer)
-  canvas.addEventListener('touchmove', onPointer)
-  canvas.addEventListener('mouseleave', () => { tooltip.textContent = '' })
-  canvas.addEventListener('touchend', () => { tooltip.textContent = '' })
+  // Crosshair is now handled by lightweight-charts internally
 }
 
 // === Init ===
@@ -856,7 +1056,10 @@ async function init() {
     presetsDiv.appendChild(s)
   })
 
-  loadMarket()
+  // Restore tab from URL hash
+  const savedTab = location.hash.replace('#', '') || 'market'
+  switchTab(savedTab)
+
   loadKlines('1m')
   await autoLogin()
   if (token) connectWS()
@@ -876,7 +1079,7 @@ async function init() {
 
   // Auto refresh
   setInterval(loadMarket, 5000)
-  setInterval(() => loadKlines(currentKlineInterval), 10000)
+  setInterval(() => loadKlines(currentKlineInterval), 5000)
 }
 
 init()

@@ -195,11 +195,28 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		if now.Sub(lastBroadcast) >= time.Duration(publishIntervalMs)*time.Millisecond {
 			lastBroadcast = now
 			ticker := priceCache.GetTicker()
+
+			// Build kline snapshots for all intervals
+			klineSnap := make(map[string]interface{})
+			for _, cfg := range pricefeed.Intervals {
+				bar := klineAggregator.GetCurrentBar(cfg.Name)
+				if bar != nil {
+					klineSnap[cfg.Name] = map[string]interface{}{
+						"t": bar.OpenTime.UnixMilli(),
+						"o": bar.Open.String(),
+						"h": bar.High.String(),
+						"l": bar.Low.String(),
+						"c": bar.Close.String(),
+					}
+				}
+			}
+
 			msg, _ := ws.NewMessage("ticker", map[string]interface{}{
 				"p": ticker.Price.String(),
 				"c": ticker.Change.StringFixed(2),
 				"h": ticker.High.String(),
 				"l": ticker.Low.String(),
+				"k": klineSnap,
 			})
 			hub.Broadcast(msg)
 		}

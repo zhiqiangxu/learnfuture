@@ -23,6 +23,12 @@ data/
 .DS_Store
 Thumbs.db
 
+# Playwright MCP
+.playwright-mcp/
+
+# Cross-compiled binaries
+learn_future_linux
+
 # Environment
 .env
 *.local

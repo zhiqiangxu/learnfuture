@@ -92,6 +92,7 @@ func (a *KlineAggregator) OnTrade(price decimal.Decimal, ts time.Time) {
 
 // updateBase handles the base interval (1s). When a 1s bar closes,
 // it cascades upward: the closed 1s bar is merged into 5s, etc.
+// If multiple periods were skipped (no ticks), fill gaps with flat candles.
 func (a *KlineAggregator) updateBase(price decimal.Decimal, ts time.Time) {
 	cfg := a.configs["1s"]
 	openTime := truncateToInterval(ts, cfg.Duration)
@@ -99,12 +100,32 @@ func (a *KlineAggregator) updateBase(price decimal.Decimal, ts time.Time) {
 	bar := a.current["1s"]
 
 	if bar == nil || !bar.OpenTime.Equal(openTime) {
+		// Use previous bar's close as the new bar's open for continuity
+		openPrice := price
 		if bar != nil {
+			openPrice = bar.Close
 			a.closeAndCascade(bar, cfg)
+
+			// Fill gaps: generate flat candles for skipped periods
+			lastClose := bar.Close
+			gapStart := bar.OpenTime.Add(cfg.Duration)
+			maxFill := 3
+			for filled := 0; gapStart.Before(openTime) && filled < maxFill; filled++ {
+				gapEnd := gapStart.Add(cfg.Duration)
+				flatBar := &KlineBar{
+					Interval: "1s", OpenTime: gapStart, CloseTime: gapEnd,
+					Open: lastClose, High: lastClose, Low: lastClose, Close: lastClose,
+				}
+				a.closeAndCascade(flatBar, cfg)
+				gapStart = gapEnd
+			}
 		}
+		// Open = previous close, High/Low include both open and current price
+		highPrice := decimal.Max(openPrice, price)
+		lowPrice := decimal.Min(openPrice, price)
 		a.current["1s"] = &KlineBar{
 			Interval: "1s", OpenTime: openTime, CloseTime: closeTime,
-			Open: price, High: price, Low: price, Close: price,
+			Open: openPrice, High: highPrice, Low: lowPrice, Close: price,
 		}
 	} else {
 		if price.GreaterThan(bar.High) {
@@ -133,17 +154,19 @@ func (a *KlineAggregator) updateAncestors(price decimal.Decimal, ts time.Time) {
 		bar := a.current[parentName]
 
 		if bar == nil {
-			// First time seeing this interval — init from tick
 			a.current[parentName] = &KlineBar{
 				Interval: parentName, OpenTime: openTime, CloseTime: closeTime,
 				Open: price, High: price, Low: price, Close: price,
 			}
 		} else if !bar.OpenTime.Equal(openTime) {
-			// Period rolled over — close old bar, start new
+			// Period rolled over — use previous close as new open for continuity
+			openPrice := bar.Close
 			a.closeBarOnly(bar, cfg)
+			highPrice := decimal.Max(openPrice, price)
+			lowPrice := decimal.Min(openPrice, price)
 			a.current[parentName] = &KlineBar{
 				Interval: parentName, OpenTime: openTime, CloseTime: closeTime,
-				Open: price, High: price, Low: price, Close: price,
+				Open: openPrice, High: highPrice, Low: lowPrice, Close: price,
 			}
 		} else {
 			// Same period — update high/low/close
