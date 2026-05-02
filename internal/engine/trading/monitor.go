@@ -226,8 +226,12 @@ func (m *Monitor) handleLiquidation(pos *cache.CachedPosition, lastPrice, entryP
 		)
 
 		if liqResult.NeedADL {
-			log.Printf("[Monitor] insurance fund depleted, triggering ADL for deficit=%s", liqResult.ADLDeficit)
-			m.triggerADL(pos.Side, liqResult.ADLDeficit, lastPrice)
+			// Calculate bankruptcy price: price where margin goes to zero
+			// Long: bankruptcyPrice = entryPrice - margin/quantity
+			// Short: bankruptcyPrice = entryPrice + margin/quantity
+			bankruptcyPrice := entryPrice.Sub(margin.Div(quantity).Mul(decimal.NewFromInt(int64(pos.Side))))
+			log.Printf("[Monitor] insurance fund depleted, triggering ADL for deficit=%s bankruptcyPrice=%s", liqResult.ADLDeficit, bankruptcyPrice)
+			m.triggerADL(pos.Side, liqResult.ADLDeficit, bankruptcyPrice, lastPrice)
 		}
 
 		log.Printf("[Monitor] liquidation pos=%d surplus=%s fundBalance=%s",
@@ -275,7 +279,8 @@ func (m *Monitor) handleClose(pos *cache.CachedPosition, lastPrice decimal.Decim
 }
 
 // triggerADL finds opposing profitable positions and reduces them to cover the deficit.
-func (m *Monitor) triggerADL(liquidatedSide int, deficit, currentPrice decimal.Decimal) {
+// bankruptcyPrice is the price at which the liquidated position's margin goes to zero.
+func (m *Monitor) triggerADL(liquidatedSide int, deficit, bankruptcyPrice, currentPrice decimal.Decimal) {
 	// ADL targets the opposite side (if a long was liquidated, reduce shorts)
 	targetSide := -liquidatedSide
 
@@ -287,24 +292,28 @@ func (m *Monitor) triggerADL(liquidatedSide int, deficit, currentPrice decimal.D
 		return
 	}
 
-	results, remaining := adl.ExecuteADL(ranked, deficit, currentPrice)
+	// Use bankruptcy price for settlement (not market price) — ensures zero-sum
+	results, remaining := adl.ExecuteADL(ranked, deficit, bankruptcyPrice)
 	for _, r := range results {
-		if r.FullyClosed {
-			_, err := m.engine.ClosePositionInternal(r.PositionID, currentPrice, model.CloseReasonForceTp)
-			if err != nil {
-				log.Printf("[Monitor] ADL close position %d error: %v", r.PositionID, err)
-				continue
-			}
+		// Close at bankruptcy price (counterparty gets less profit than market price)
+		closePrice := bankruptcyPrice
+		_, err := m.engine.ClosePositionInternal(r.PositionID, closePrice, model.CloseReasonADL)
+		if err != nil {
+			log.Printf("[Monitor] ADL close position %d error: %v", r.PositionID, err)
+			continue
 		}
 		// Notify the ADL'd user
 		msg, _ := ws.NewMessage("adl", map[string]interface{}{
-			"position_id": r.PositionID,
-			"reduced_qty": r.ReducedQty.String(),
-			"price":       currentPrice.String(),
+			"position_id":    r.PositionID,
+			"reduced_qty":    r.ReducedQty.String(),
+			"price":          closePrice.String(),
+			"market_price":   currentPrice.String(),
+			"realized_pnl":   r.RealizedPnl.String(),
 		})
 		m.hub.SendToUser(r.UserID, msg)
 
-		log.Printf("[Monitor] ADL: reduced position %d by %s BTC", r.PositionID, r.ReducedQty)
+		log.Printf("[Monitor] ADL: reduced position %d by %s BTC at bankruptcy price %s (market %s)",
+			r.PositionID, r.ReducedQty, closePrice, currentPrice)
 	}
 
 	if remaining.IsPositive() {

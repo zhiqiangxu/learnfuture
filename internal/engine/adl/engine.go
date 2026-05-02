@@ -97,10 +97,11 @@ type ADLResult struct {
 	FullyClosed    bool
 }
 
-// ExecuteADL simulates the ADL reduction on ranked positions.
-// It reduces positions starting from the highest priority until the deficit is covered.
-// Returns the list of ADL results and any remaining uncovered deficit.
-func ExecuteADL(ranked []*RankedPosition, deficit, currentPrice decimal.Decimal) (results []*ADLResult, remainingDeficit decimal.Decimal) {
+// ExecuteADL reduces opposing positions to cover the deficit from a liquidation.
+// Uses the bankruptcyPrice (not market price) for settlement, ensuring zero-sum:
+// the counterparty's "lost" profit exactly covers the bankrupt position's deficit.
+// bankruptcyPrice: the price at which the liquidated position's margin goes to zero.
+func ExecuteADL(ranked []*RankedPosition, deficit, bankruptcyPrice decimal.Decimal) (results []*ADLResult, remainingDeficit decimal.Decimal) {
 	remainingDeficit = deficit
 
 	for _, rp := range ranked {
@@ -113,8 +114,13 @@ func ExecuteADL(ranked []*RankedPosition, deficit, currentPrice decimal.Decimal)
 		quantity, _ := decimal.NewFromString(pos.Quantity)
 		margin, _ := decimal.NewFromString(pos.Margin)
 
-		// How much of this position needs to be reduced
-		neededQty := CalcADLQuantity(remainingDeficit, currentPrice)
+		// How much quantity to reduce: deficit / |bankruptcyPrice - entryPrice|
+		// This is how much the counterparty needs to "give back"
+		priceDiff := bankruptcyPrice.Sub(entryPrice).Abs()
+		if priceDiff.IsZero() {
+			continue
+		}
+		neededQty := remainingDeficit.Div(priceDiff)
 
 		reducedQty := neededQty
 		fullyClosed := false
@@ -123,28 +129,27 @@ func ExecuteADL(ranked []*RankedPosition, deficit, currentPrice decimal.Decimal)
 			fullyClosed = true
 		}
 
-		// Calculate the margin and PnL for the reduced portion
 		ratio := reducedQty.Div(quantity)
 		reducedMargin := margin.Mul(ratio)
 
-		// PnL for the reduced portion
-		upnl := position.CalcUnrealizedPnL(entryPrice, currentPrice, reducedQty, pos.Side)
+		// PnL at bankruptcy price (less than market price PnL — this is the ADL cost)
+		realizedPnl := position.CalcUnrealizedPnL(entryPrice, bankruptcyPrice, reducedQty, pos.Side)
 
-		// The deficit covered by this reduction
-		coveredAmount := reducedQty.Mul(currentPrice)
+		// Deficit covered = what the counterparty "gives up" vs market price
+		coveredAmount := reducedQty.Mul(priceDiff)
 		if coveredAmount.GreaterThan(remainingDeficit) {
 			coveredAmount = remainingDeficit
 		}
 		remainingDeficit = remainingDeficit.Sub(coveredAmount)
 
 		results = append(results, &ADLResult{
-			PositionID:   pos.ID,
-			UserID:       pos.UserID,
-			ReducedQty:   reducedQty,
+			PositionID:    pos.ID,
+			UserID:        pos.UserID,
+			ReducedQty:    reducedQty,
 			ReducedMargin: reducedMargin,
-			RealizedPnl:  upnl,
-			RemainingQty: quantity.Sub(reducedQty),
-			FullyClosed:  fullyClosed,
+			RealizedPnl:   realizedPnl,
+			RemainingQty:  quantity.Sub(reducedQty),
+			FullyClosed:   fullyClosed,
 		})
 	}
 

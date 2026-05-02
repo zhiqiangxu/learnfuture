@@ -13,6 +13,7 @@ const (
 	CloseReasonStopLoss    = 2
 	CloseReasonLiquidation = 3
 	CloseReasonForceTp     = 4
+	CloseReasonADL         = 5
 )
 
 type Trade struct {

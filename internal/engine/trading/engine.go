@@ -440,7 +440,7 @@ func (e *Engine) ClosePositionInternal(positionID int64, closePrice decimal.Deci
 	switch closeReason {
 	case model.CloseReasonLiquidation:
 		targetState = cache.PosStateLiquidating
-	case model.CloseReasonForceTp:
+	case model.CloseReasonForceTp, model.CloseReasonADL:
 		targetState = cache.PosStateForceTPing
 	default:
 		targetState = cache.PosStateClosing
