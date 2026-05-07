@@ -43,7 +43,6 @@ type Engine struct {
 	book              *orderbook.Book
 	clearance         *clearing.Clearance
 	settler           *clearing.Settler
-	wal               *clearing.WAL
 	accountModel      *model.AccountModel
 	orderModel        *model.OrderModel
 	positionModel     *model.PositionModel
@@ -99,7 +98,6 @@ func NewEngine(
 	tradeModel *model.TradeModel,
 	clearance *clearing.Clearance,
 	settler *clearing.Settler,
-	wal *clearing.WAL,
 	cfg EngineConfig,
 ) *Engine {
 	maxPos := cfg.MaxPositions
@@ -116,7 +114,7 @@ func NewEngine(
 	return &Engine{
 		db: db, priceCache: priceCache, positionCache: positionCache,
 		orderCache: orderCache, book: book, clearance: clearance,
-		settler: settler, wal: wal,
+		settler: settler,
 		accountModel: accountModel, orderModel: orderModel,
 		positionModel: positionModel, tradeModel: tradeModel,
 		maxLeverage: cfg.MaxLeverage, minMargin: cfg.MinMargin,
@@ -154,14 +152,6 @@ func (e *Engine) PlaceMarketOrder(userID int64, side, leverage, marginMode int, 
 	tradingFee, _ := e.clearance.CalcTakerFee(positionValue)
 	totalCost := margin.Add(tradingFee)
 
-	// WAL + memory deduct
-	var walSeq uint64
-	if e.wal != nil {
-		seq, _ := e.wal.WriteGroup([]*clearing.WALEntry{
-			{Type: clearing.WALDeduct, UserID: userID, Amount: totalCost},
-		})
-		walSeq = seq
-	}
 	if !e.memAccounts.Deduct(userID, totalCost) {
 		return nil, model.ErrInsufficientBalance
 	}
@@ -250,12 +240,10 @@ func (e *Engine) PlaceMarketOrder(userID int64, side, leverage, marginMode int, 
 	}
 
 	e.settler.Submit(&clearing.SettleEvent{
-		Type: clearing.EventOpenPosition, Seq: walSeq,
-		Order: order, Position: pos, Trade: trade,
+		Type: clearing.EventOpenPosition, 		Order: order, Position: pos, Trade: trade,
 	})
 	e.settler.Submit(&clearing.SettleEvent{
-		Type: clearing.EventBalanceUpdate, Seq: walSeq,
-		UserID: userID, BalanceDelta: totalCost.Neg(),
+		Type: clearing.EventBalanceUpdate, 		UserID: userID, BalanceDelta: totalCost.Neg(),
 	})
 
 	status := "filled"
@@ -295,11 +283,6 @@ func (e *Engine) PlaceLimitOrder(userID int64, side, leverage int, margin, limit
 	makerFee, _ := e.clearance.CalcMakerFee(positionValue)
 	totalCost := margin.Add(makerFee)
 
-	if e.wal != nil {
-		e.wal.WriteGroup([]*clearing.WALEntry{
-			{Type: clearing.WALFreeze, UserID: userID, Amount: totalCost},
-		})
-	}
 	if !e.memAccounts.Freeze(userID, totalCost) {
 		return nil, model.ErrInsufficientBalance
 	}
@@ -488,13 +471,6 @@ func (e *Engine) applyClose(pos *model.Position, closePrice, closedQty decimal.D
 	})
 
 	// --- MEMORY ---
-	if e.wal != nil {
-		if closeReason == model.CloseReasonLiquidation {
-			e.wal.WriteGroup([]*clearing.WALEntry{{Type: clearing.WALPnl, UserID: pos.UserID, Amount: cr.CloseMargin.Neg()}})
-		} else {
-			e.wal.WriteGroup([]*clearing.WALEntry{{Type: clearing.WALReturn, UserID: pos.UserID, Amount: cr.CloseMargin, Amount2: cr.NetPnl}})
-		}
-	}
 	if closeReason == model.CloseReasonLiquidation {
 		e.memAccounts.AddPnl(pos.UserID, cr.CloseMargin.Neg())
 	} else {

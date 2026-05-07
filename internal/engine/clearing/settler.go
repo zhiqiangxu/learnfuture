@@ -24,7 +24,6 @@ const (
 // SettleEvent is the unit of work sent from matching to clearing.
 type SettleEvent struct {
 	Type      EventType
-	Seq       uint64 // WAL sequence number for commit tracking
 	Timestamp time.Time
 
 	// For EventOpenPosition
@@ -62,7 +61,6 @@ type Settler struct {
 	tradeModel    *model.TradeModel
 	accountModel  *model.AccountModel
 	fundingModel  *model.FundingModel
-	wal           *WAL // reference to WAL for commit marking
 	done          chan struct{}
 }
 
@@ -88,11 +86,6 @@ func NewSettler(
 	}
 }
 
-// SetWAL sets the WAL reference for commit marking after DB persistence.
-func (s *Settler) SetWAL(wal *WAL) {
-	s.wal = wal
-}
-
 // Submit sends a settle event to the async processing queue.
 func (s *Settler) Submit(event *SettleEvent) {
 	event.Timestamp = time.Now()
@@ -103,10 +96,9 @@ func (s *Settler) Submit(event *SettleEvent) {
 	}
 }
 
-// Start begins the settlement worker goroutine and WAL truncation timer.
+// Start begins the settlement worker goroutine.
 func (s *Settler) Start() {
 	go s.processLoop()
-	go s.walTruncateLoop()
 }
 
 // Stop gracefully shuts down, draining remaining events.
@@ -153,7 +145,6 @@ func (s *Settler) processEvent(evt *SettleEvent) {
 	}
 
 	// Mark WAL entries as committed after successful DB write
-	s.markCommitted(evt.Seq)
 }
 
 func (s *Settler) settleOpen(evt *SettleEvent) {
@@ -233,33 +224,3 @@ func (s *Settler) settleFunding(evt *SettleEvent) {
 	}
 }
 
-// walTruncateLoop periodically truncates committed WAL entries to prevent unbounded growth.
-func (s *Settler) walTruncateLoop() {
-	if s.wal == nil {
-		return
-	}
-	ticker := time.NewTicker(1 * time.Hour)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ticker.C:
-			if err := s.wal.Truncate(); err != nil {
-				log.Printf("[Settler] WAL truncate error: %v", err)
-			} else {
-				log.Printf("[Settler] WAL truncated successfully")
-			}
-		case <-s.done:
-			return
-		}
-	}
-}
-
-// markCommitted marks the WAL entry as persisted to DB.
-func (s *Settler) markCommitted(seq uint64) {
-	if s.wal == nil || seq == 0 {
-		return
-	}
-	if err := s.wal.MarkCommitted(seq); err != nil {
-		log.Printf("[Settler] WAL markCommitted error: %v", err)
-	}
-}

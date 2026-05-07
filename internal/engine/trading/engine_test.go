@@ -1,7 +1,6 @@
 package trading
 
 import (
-	"path/filepath"
 	"testing"
 
 	"github.com/shopspring/decimal"
@@ -21,13 +20,10 @@ func newTestEngine(t *testing.T) (*Engine, *cache.PriceCache, *cache.PositionCac
 	fc := fee.NewCalculator(nil)
 	ob := orderbook.NewBook()
 	settler := clearing.NewSettler(nil, nil, nil, nil, nil, 100)
-	walPath := filepath.Join(t.TempDir(), "test.wal")
-	wal, _ := clearing.NewWAL(walPath)
-
 	clearance := clearing.NewClearance(fc,
 		decimal.NewFromFloat(0.0004), decimal.NewFromFloat(0.005), decimal.NewFromInt(5))
 
-	e := NewEngine(nil, pc, posc, oc, ob, nil, nil, nil, nil, clearance, settler, wal, EngineConfig{
+	e := NewEngine(nil, pc, posc, oc, ob, nil, nil, nil, nil, clearance, settler, EngineConfig{
 		MaxLeverage: 125,
 		MinMargin:   decimal.NewFromInt(1),
 	})

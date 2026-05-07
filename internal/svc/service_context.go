@@ -3,8 +3,6 @@ package svc
 import (
 	"database/sql"
 	"log"
-	"os"
-	"path/filepath"
 	"time"
 
 	_ "github.com/lib/pq"
@@ -49,7 +47,6 @@ type ServiceContext struct {
 	TradingEngine    *trading.Engine
 	TradeMonitor     *trading.Monitor
 	Settler          *clearing.Settler
-	WAL              *clearing.WAL
 	PriceFeed        *pricefeed.Manager
 	KlineAggregator  *pricefeed.KlineAggregator
 	FundingScheduler *funding.Scheduler
@@ -110,29 +107,17 @@ func NewServiceContext(c config.Config) *ServiceContext {
 	// Market maker bot (provides liquidity, tracks external price)
 	mmBot := marketmaker.NewBot(ob, priceCache, marketmaker.DefaultConfig)
 
-	// WAL (Write-Ahead Log) for crash recovery
-	walPath := c.Trading.WALPath
-	if walPath == "" {
-		walPath = "data/matching.wal"
-	}
-	os.MkdirAll(filepath.Dir(walPath), 0755)
-	wal, err := clearing.NewWAL(walPath)
-	if err != nil {
-		log.Printf("[WAL] failed to open WAL, running without crash recovery: %v", err)
-	}
-
 	// Clearance (pure calculation layer: margin/fee/PnL/liq price)
 	clearance := clearing.NewClearance(feeCalculator, feeRate, maintRate, forceTpROI)
 
 	// Settlement (DB persistence layer)
 	settler := clearing.NewSettler(orderModel, positionModel, tradeModel, accountModel, fundingModel, 10000)
-	settler.SetWAL(wal)
 
 	// Matching engine (orderbook matching + memory state)
 	tradingEngine := trading.NewEngine(
 		db, priceCache, positionCache, orderCache, ob,
 		accountModel, orderModel, positionModel, tradeModel,
-		clearance, settler, wal,
+		clearance, settler,
 		trading.EngineConfig{
 			MaxLeverage: c.Trading.MaxLeverage,
 			MinMargin:   minMargin,
@@ -253,7 +238,6 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		TradingEngine:    tradingEngine,
 		TradeMonitor:     tradeMonitor,
 		Settler:          settler,
-		WAL:              wal,
 		PriceFeed:        priceFeed,
 		KlineAggregator:  klineAggregator,
 		FundingScheduler: fundingScheduler,
@@ -331,20 +315,6 @@ func (svc *ServiceContext) LoadCachesFromDB() error {
 		return err
 	}
 	log.Printf("[Cache] loaded %d account balances to memory", accountCount)
-
-	// WAL crash recovery: replay uncommitted entries on top of DB state
-	if svc.WAL != nil {
-		uncommitted, err := svc.WAL.ReadUncommitted()
-		if err != nil {
-			log.Printf("[WAL] read uncommitted error: %v", err)
-		} else if len(uncommitted) > 0 {
-			memAccounts := svc.TradingEngine.GetMemAccounts()
-			for _, entry := range uncommitted {
-				clearing.ReplayEntry(entry, memAccounts)
-			}
-			log.Printf("[WAL] replayed %d uncommitted entries for crash recovery", len(uncommitted))
-		}
-	}
 
 	return nil
 }

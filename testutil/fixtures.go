@@ -39,7 +39,7 @@ func NewTestServiceContext() *svc.ServiceContext {
 	tradingEngine := trading.NewEngine(
 		nil, priceCache, positionCache, orderCache, ob,
 		nil, nil, nil, nil,
-		clearance, settler, nil,
+		clearance, settler,
 		trading.EngineConfig{
 			MaxLeverage: 125,
 			MinMargin:   decimal.NewFromInt(1),

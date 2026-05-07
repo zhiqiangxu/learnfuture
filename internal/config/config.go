@@ -37,7 +37,6 @@ type Config struct {
 		MinMargin             string
 		InitialBalance        string
 		ForceTpROI            string
-		WALPath               string `json:",optional"`
 	}
 
 	Funding struct {
