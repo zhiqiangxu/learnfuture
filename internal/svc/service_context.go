@@ -218,6 +218,7 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		accountModel,
 		fundingModel,
 		hub,
+		maintRate,
 	)
 
 	return &ServiceContext{

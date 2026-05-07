@@ -129,6 +129,14 @@ func (m *PositionModel) UpdateFundingPnl(id int64, fundingPayment decimal.Decima
 	return err
 }
 
+func (m *PositionModel) UpdateMargin(id int64, newMargin, newLiqPrice decimal.Decimal) error {
+	_, err := m.db.Exec(
+		`UPDATE positions SET margin = $1, liq_price = $2, updated_at = NOW() WHERE id = $3`,
+		newMargin, newLiqPrice, id,
+	)
+	return err
+}
+
 func scanPositions(rows *sql.Rows) ([]*Position, error) {
 	var positions []*Position
 	for rows.Next() {
