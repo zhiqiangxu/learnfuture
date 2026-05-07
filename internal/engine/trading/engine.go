@@ -176,6 +176,9 @@ func (e *Engine) PlaceMarketOrder(userID int64, side, leverage, marginMode int, 
 		return nil, ErrNoLiquidity
 	}
 
+	// --- COUNTERPARTY: process maker side positions (zero-sum) ---
+	e.processCounterpartyTrades(obTrades, side)
+
 	// --- CLEARING: pure calculation ---
 	e.mu.Lock()
 	existing := e.positionCache.FindByUserSide(userID, side)
@@ -428,6 +431,9 @@ func (e *Engine) ClosePosition(positionID, userID int64, closeReason int, closeQ
 		return nil, ErrNoLiquidity
 	}
 
+	// --- COUNTERPARTY: process maker side positions (zero-sum) ---
+	e.processCounterpartyTrades(obTrades, -pos.Side)
+
 	closePrice, closedQty := clearing.CalcVWAP(obTrades)
 	return e.applyClose(pos, closePrice, closedQty, closeReason)
 }
@@ -458,10 +464,17 @@ func (e *Engine) ClosePositionInternal(positionID int64, closePrice decimal.Deci
 	obTrades := e.book.PlaceMarket(&orderbook.Order{
 		ID: e.book.NextOrderID(), UserID: pos.UserID, Side: -pos.Side, Quantity: pos.Quantity,
 	})
-	actualPrice, actualQty := closePrice, pos.Quantity
-	if len(obTrades) > 0 {
-		actualPrice, actualQty = clearing.CalcVWAP(obTrades)
+	if len(obTrades) == 0 {
+		// No liquidity — rollback state, cannot close
+		e.positionCache.Update(positionID, func(p *cache.CachedPosition) { p.State.Store(cache.PosStateActive) })
+		return nil, ErrNoLiquidity
 	}
+
+	// --- COUNTERPARTY: process maker side positions (zero-sum) ---
+	e.processCounterpartyTrades(obTrades, -pos.Side)
+
+	// Use actual matched price and quantity (may be partial fill)
+	actualPrice, actualQty := clearing.CalcVWAP(obTrades)
 	return e.applyClose(pos, actualPrice, actualQty, closeReason)
 }
 
@@ -622,6 +635,115 @@ func cachedToModel(cp *cache.CachedPosition) *model.Position {
 func decimalPtrToString(d *decimal.Decimal) string {
 	if d == nil { return "" }
 	return d.String()
+}
+
+// ============================================================
+// processCounterpartyTrades handles the maker (counterparty) side
+// of every trade, ensuring zero-sum position tracking.
+//
+// For each trade, the counterparty either:
+//   - Has no position → create new position (opposite side)
+//   - Has same-direction position → increase position
+//   - Has opposite-direction position → reduce/close position (settle PnL)
+// ============================================================
+func (e *Engine) processCounterpartyTrades(trades []*orderbook.Trade, takerSide int) {
+	for _, t := range trades {
+		// Determine counterparty userID and their trade side
+		var cpUserID int64
+		var cpSide int
+		if takerSide == 1 { // taker is buyer → counterparty is seller
+			cpUserID = t.SellUserID
+			cpSide = -1
+		} else {
+			cpUserID = t.BuyUserID
+			cpSide = 1
+		}
+
+		tradePrice := t.Price
+		tradeQty := t.Quantity
+
+		// Find counterparty's existing position
+		existing := e.positionCache.FindByUserSide(cpUserID, -cpSide) // check for opposite position first
+		sameDir := e.positionCache.FindByUserSide(cpUserID, cpSide)
+
+		if existing != nil {
+			// Counterparty has opposite position → this trade closes/reduces it
+			existingQty, _ := decimal.NewFromString(existing.Quantity)
+			existingEntry, _ := decimal.NewFromString(existing.EntryPrice)
+			existingMargin, _ := decimal.NewFromString(existing.Margin)
+
+			if tradeQty.GreaterThanOrEqual(existingQty) {
+				// Full close
+				pnl := position.CalcUnrealizedPnL(existingEntry, tradePrice, existingQty, existing.Side)
+				e.memAccounts.ReturnMarginWithPnl(cpUserID, existingMargin, pnl)
+				e.positionCache.Remove(existing.ID)
+				log.Printf("[Counterparty] closed position %d for user %d, pnl=%s", existing.ID, cpUserID, pnl.StringFixed(2))
+
+				// Remaining quantity opens new position in trade direction
+				remaining := tradeQty.Sub(existingQty)
+				if remaining.IsPositive() {
+					e.createCounterpartyPosition(cpUserID, cpSide, tradePrice, remaining)
+				}
+			} else {
+				// Partial close
+				ratio := tradeQty.Div(existingQty)
+				closeMargin := existingMargin.Mul(ratio)
+				pnl := position.CalcUnrealizedPnL(existingEntry, tradePrice, tradeQty, existing.Side)
+				e.memAccounts.ReturnMarginWithPnl(cpUserID, closeMargin, pnl)
+
+				newQty := existingQty.Sub(tradeQty)
+				newMargin := existingMargin.Sub(closeMargin)
+				e.positionCache.Update(existing.ID, func(cp *cache.CachedPosition) {
+					cp.Quantity = newQty.String()
+					cp.Margin = newMargin.String()
+					cp.State.Store(cache.PosStateActive)
+				})
+				log.Printf("[Counterparty] reduced position %d by %s, pnl=%s", existing.ID, tradeQty, pnl.StringFixed(2))
+			}
+		} else if sameDir != nil {
+			// Counterparty has same-direction position → increase (weighted average)
+			oldQty, _ := decimal.NewFromString(sameDir.Quantity)
+			oldEntry, _ := decimal.NewFromString(sameDir.EntryPrice)
+			oldMargin, _ := decimal.NewFromString(sameDir.Margin)
+
+			newQty := oldQty.Add(tradeQty)
+			newEntry := oldEntry.Mul(oldQty).Add(tradePrice.Mul(tradeQty)).Div(newQty)
+			addMargin := tradePrice.Mul(tradeQty).Div(decimal.NewFromInt(int64(sameDir.Leverage)))
+			newMargin := oldMargin.Add(addMargin)
+
+			e.memAccounts.Deduct(cpUserID, addMargin)
+			e.positionCache.Update(sameDir.ID, func(cp *cache.CachedPosition) {
+				cp.EntryPrice = newEntry.String()
+				cp.Quantity = newQty.String()
+				cp.Margin = newMargin.String()
+			})
+			log.Printf("[Counterparty] increased position %d, qty=%s, entry=%s", sameDir.ID, newQty, newEntry.StringFixed(2))
+		} else {
+			// No existing position → create new
+			e.createCounterpartyPosition(cpUserID, cpSide, tradePrice, tradeQty)
+		}
+	}
+}
+
+// createCounterpartyPosition creates a new position for the counterparty (typically market maker).
+func (e *Engine) createCounterpartyPosition(userID int64, side int, price, qty decimal.Decimal) {
+	leverage := 1 // market maker uses 1x leverage (fully collateralized)
+	margin := price.Mul(qty) // full notional as margin
+	e.memAccounts.Deduct(userID, margin)
+
+	liqPrice := e.clearance.CalcLiqPrice(price, leverage, side)
+	ftpPrice := e.clearance.CalcForceTpPrice(price, leverage, side)
+
+	e.nextPosID++
+	e.positionCache.Add(&cache.CachedPosition{
+		ID: e.nextPosID, UserID: userID, Side: side,
+		MarginMode: model.MarginModeIsolated, Leverage: leverage,
+		EntryPrice: price.String(), Quantity: qty.String(),
+		Margin: margin.String(), LiqPrice: liqPrice.String(),
+		ForceTpPrice: ftpPrice.String(),
+	})
+	log.Printf("[Counterparty] created position %d for user %d, side=%d, qty=%s, entry=%s",
+		e.nextPosID, userID, side, qty, price.StringFixed(2))
 }
 
 func LogError(op string, err error) {

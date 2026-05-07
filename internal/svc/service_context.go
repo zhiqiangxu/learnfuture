@@ -367,6 +367,9 @@ func (svc *ServiceContext) loadAccountsToMemory() (int, error) {
 		memAccounts.Load(userID, balance, frozen)
 		count++
 	}
+	// Ensure market maker (SystemUserID=0) has a large account for zero-sum trading
+	memAccounts.Load(0, decimal.NewFromInt(100_000_000), decimal.Zero)
+
 	return count, rows.Err()
 }
 
