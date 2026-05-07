@@ -662,6 +662,13 @@ func (e *Engine) processCounterpartyTrades(trades []*orderbook.Trade, takerSide 
 		tradePrice := t.Price
 		tradeQty := t.Quantity
 
+		// Only process market maker (UserID=0) for now.
+		// Real users' positions are handled by FillLimitOrder.
+		// TODO: unify all position processing here for true zero-sum between real users.
+		if cpUserID != 0 {
+			continue
+		}
+
 		// Find counterparty's existing position
 		existing := e.positionCache.FindByUserSide(cpUserID, -cpSide) // check for opposite position first
 		sameDir := e.positionCache.FindByUserSide(cpUserID, cpSide)
