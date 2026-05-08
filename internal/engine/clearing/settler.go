@@ -170,6 +170,10 @@ func (s *Settler) settleOpen(evt *SettleEvent) {
 			log.Printf("[Settler] persist trade error: %v", err)
 		}
 	}
+	// Balance update (combined into open event)
+	if evt.UserID > 0 && !evt.BalanceDelta.IsZero() {
+		s.accountModel.UpdateBalance(evt.UserID, evt.BalanceDelta, evt.FrozenDelta)
+	}
 }
 
 func (s *Settler) settleClose(evt *SettleEvent) {
@@ -201,6 +205,9 @@ func (s *Settler) settleClose(evt *SettleEvent) {
 
 func (s *Settler) settleCancelOrder(evt *SettleEvent) {
 	s.orderModel.Cancel(evt.OrderID, evt.UserID)
+	if evt.UserID > 0 && !evt.BalanceDelta.IsZero() {
+		s.accountModel.UpdateBalance(evt.UserID, evt.BalanceDelta, evt.FrozenDelta)
+	}
 }
 
 func (s *Settler) settleBalanceUpdate(evt *SettleEvent) {

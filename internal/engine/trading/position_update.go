@@ -107,10 +107,7 @@ func (e *Engine) handleOpen(userID int64, side int, qty, price decimal.Decimal, 
 	}
 	e.settler.Submit(&clearing.SettleEvent{
 		Type: clearing.EventOpenPosition, Order: order, Position: pos, Trade: trade,
-	})
-	e.settler.Submit(&clearing.SettleEvent{
-		Type: clearing.EventBalanceUpdate, UserID: userID,
-		BalanceDelta: totalCost.Neg(), FrozenDelta: decimal.Zero,
+		UserID: userID, BalanceDelta: totalCost.Neg(),
 	})
 
 	log.Printf("[UpdatePosition] user %d opened %s %s @ %s, margin=%s",

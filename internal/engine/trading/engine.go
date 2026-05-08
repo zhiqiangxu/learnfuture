@@ -272,9 +272,8 @@ func (e *Engine) PlaceLimitOrder(userID int64, side, leverage int, margin, limit
 		Leverage: leverage,
 		TakeProfit: decimalPtrToString(tp), StopLoss: decimalPtrToString(sl),
 	})
-	e.settler.Submit(&clearing.SettleEvent{Type: clearing.EventOpenPosition, Order: order})
 	e.settler.Submit(&clearing.SettleEvent{
-		Type: clearing.EventBalanceUpdate,
+		Type: clearing.EventOpenPosition, Order: order,
 		UserID: userID, BalanceDelta: totalCost.Neg(), FrozenDelta: totalCost,
 	})
 	return &PlaceOrderResult{Order: order, Status: "pending"}, nil
@@ -294,9 +293,8 @@ func (e *Engine) CancelOrder(orderID, userID int64) error {
 	totalFrozen := cachedOrder.MarginCost.Add(fee)
 	e.memAccounts.Unfreeze(userID, totalFrozen)
 	e.orderCache.Remove(orderID)
-	e.settler.Submit(&clearing.SettleEvent{Type: clearing.EventCancelOrder, OrderID: orderID, UserID: userID})
 	e.settler.Submit(&clearing.SettleEvent{
-		Type: clearing.EventBalanceUpdate,
+		Type: clearing.EventCancelOrder, OrderID: orderID,
 		UserID: userID, BalanceDelta: totalFrozen, FrozenDelta: totalFrozen.Neg(),
 	})
 	return nil
