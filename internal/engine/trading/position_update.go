@@ -59,8 +59,8 @@ func (e *Engine) handleOpen(userID int64, side int, qty, price decimal.Decimal, 
 		leverage = 1
 	}
 
-	margin := price.Mul(qty).Div(decimal.NewFromInt(int64(leverage)))
-	positionValue := margin.Mul(decimal.NewFromInt(int64(leverage)))
+	positionValue := price.Mul(qty)
+	margin := positionValue.Div(decimal.NewFromInt(int64(leverage)))
 
 	var fee decimal.Decimal
 	if isMaker {
