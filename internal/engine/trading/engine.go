@@ -544,7 +544,7 @@ func (e *Engine) ProcessTrades(trades []*orderbook.Trade, takerUserID int64, tak
 			buyerLeverage = takerLeverage
 			buyerIsMaker = false
 		}
-		r := e.updatePosition(t.BuyUserID, 1, t.Quantity, t.Price, buyerLeverage, buyerIsMaker, 0)
+		r := e.UpdatePosition(t.BuyUserID, 1, t.Quantity, t.Price, buyerLeverage, buyerIsMaker, 0)
 		if t.BuyUserID == takerUserID && r != nil {
 			takerResults = append(takerResults, r)
 		}
@@ -556,7 +556,7 @@ func (e *Engine) ProcessTrades(trades []*orderbook.Trade, takerUserID int64, tak
 			sellerLeverage = takerLeverage
 			sellerIsMaker = false
 		}
-		r = e.updatePosition(t.SellUserID, -1, t.Quantity, t.Price, sellerLeverage, sellerIsMaker, 0)
+		r = e.UpdatePosition(t.SellUserID, -1, t.Quantity, t.Price, sellerLeverage, sellerIsMaker, 0)
 		if t.SellUserID == takerUserID && r != nil {
 			takerResults = append(takerResults, r)
 		}

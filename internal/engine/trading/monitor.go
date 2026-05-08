@@ -260,7 +260,8 @@ func (m *Monitor) handleClose(pos *cache.CachedPosition, lastPrice decimal.Decim
 }
 
 // triggerADL finds opposing profitable positions and reduces them to cover the deficit.
-// bankruptcyPrice is the price at which the liquidated position's margin goes to zero.
+// ADL does NOT go through the order book — it directly settles positions at bankruptcy price.
+// This is because ADL only triggers when the order book has no liquidity.
 func (m *Monitor) triggerADL(liquidatedSide int, deficit, bankruptcyPrice, currentPrice decimal.Decimal) {
 	// ADL targets the opposite side (if a long was liquidated, reduce shorts)
 	targetSide := -liquidatedSide
@@ -276,25 +277,27 @@ func (m *Monitor) triggerADL(liquidatedSide int, deficit, bankruptcyPrice, curre
 	// Use bankruptcy price for settlement (not market price) — ensures zero-sum
 	results, remaining := adl.ExecuteADL(ranked, deficit, bankruptcyPrice)
 	for _, r := range results {
-		// Close at bankruptcy price (counterparty gets less profit than market price)
-		closePrice := bankruptcyPrice
-		_, err := m.engine.ClosePositionInternal(r.PositionID, closePrice, model.CloseReasonADL)
-		if err != nil {
-			log.Printf("[Monitor] ADL close position %d error: %v", r.PositionID, err)
+		// Directly reduce counterparty's position via updatePosition — NO order book
+		// The counterparty's trade side is opposite to their position (selling to close a long, etc.)
+		closeSide := -targetSide // if target is short, close side is buy (1)
+		result := m.engine.UpdatePosition(r.UserID, closeSide, r.ReducedQty, bankruptcyPrice, 1, false, model.CloseReasonADL)
+		if result == nil {
+			log.Printf("[Monitor] ADL: failed to update position for user %d", r.UserID)
 			continue
 		}
+
 		// Notify the ADL'd user
 		msg, _ := ws.NewMessage("adl", map[string]interface{}{
 			"position_id":    r.PositionID,
 			"reduced_qty":    r.ReducedQty.String(),
-			"price":          closePrice.String(),
+			"price":          bankruptcyPrice.String(),
 			"market_price":   currentPrice.String(),
-			"realized_pnl":   r.RealizedPnl.String(),
+			"realized_pnl":   result.RealizedPnl.String(),
 		})
 		m.hub.SendToUser(r.UserID, msg)
 
-		log.Printf("[Monitor] ADL: reduced position %d by %s BTC at bankruptcy price %s (market %s)",
-			r.PositionID, r.ReducedQty, closePrice, currentPrice)
+		log.Printf("[Monitor] ADL: reduced position %d by %s BTC at bankruptcy price %s (market %s), pnl=%s",
+			r.PositionID, r.ReducedQty, bankruptcyPrice, currentPrice, result.RealizedPnl.StringFixed(2))
 	}
 
 	if remaining.IsPositive() {

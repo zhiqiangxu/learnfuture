@@ -32,10 +32,10 @@ type PositionUpdateResult struct {
 	IsPartial   bool
 }
 
-// updatePosition is the unified position update function.
+// UpdatePosition is the unified position update function (exported for Monitor/ADL).
 // It handles all cases: new open, increase, reduce, close, and flip.
 // Both the taker and maker side of every trade go through this same function.
-func (e *Engine) updatePosition(userID int64, tradeSide int, qty, price decimal.Decimal, leverage int, isMaker bool, closeReason int) *PositionUpdateResult {
+func (e *Engine) UpdatePosition(userID int64, tradeSide int, qty, price decimal.Decimal, leverage int, isMaker bool, closeReason int) *PositionUpdateResult {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
