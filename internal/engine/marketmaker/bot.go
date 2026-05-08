@@ -41,18 +41,23 @@ var DefaultConfig = Config{
 	MoveThreshBps: 3,    // re-quote on 0.03% move
 }
 
+// TradeCallback is called when market maker's PlaceLimit produces trades
+// (i.e., a user's limit order was matched by the market maker's new quote).
+type TradeCallback func(trades []*orderbook.Trade, makerUserID int64, makerSide int)
+
 type Bot struct {
 	mu         sync.Mutex
 	book       *orderbook.Book
 	priceCache *cache.PriceCache
 	cfg        Config
 	done       chan struct{}
+	onTrades   TradeCallback
 
 	lastQuotePrice decimal.Decimal
 	activeOrders   []int64 // order IDs placed by bot
 }
 
-func NewBot(book *orderbook.Book, priceCache *cache.PriceCache, cfg Config) *Bot {
+func NewBot(book *orderbook.Book, priceCache *cache.PriceCache, cfg Config, onTrades TradeCallback) *Bot {
 	if cfg.SpreadBps == 0 {
 		cfg = DefaultConfig
 	}
@@ -61,6 +66,7 @@ func NewBot(book *orderbook.Book, priceCache *cache.PriceCache, cfg Config) *Bot
 		priceCache: priceCache,
 		cfg:        cfg,
 		done:       make(chan struct{}),
+		onTrades:   onTrades,
 	}
 }
 
@@ -125,25 +131,31 @@ func (b *Bot) tick() {
 		// Bid (buy) side: refPrice * (1 - offset)
 		bidPrice := refPrice.Mul(decimal.NewFromInt(1).Sub(offset)).Round(2)
 		bidID := b.book.NextOrderID()
-		b.book.PlaceLimit(&orderbook.Order{
+		bidTrades, _ := b.book.PlaceLimit(&orderbook.Order{
 			ID:       bidID,
 			UserID:   SystemUserID,
 			Side:     1,
 			Price:    bidPrice,
 			Quantity: qty.Round(8),
 		})
+		if len(bidTrades) > 0 && b.onTrades != nil {
+			b.onTrades(bidTrades, SystemUserID, 1)
+		}
 		b.activeOrders = append(b.activeOrders, bidID)
 
 		// Ask (sell) side: refPrice * (1 + offset)
 		askPrice := refPrice.Mul(decimal.NewFromInt(1).Add(offset)).Round(2)
 		askID := b.book.NextOrderID()
-		b.book.PlaceLimit(&orderbook.Order{
+		askTrades, _ := b.book.PlaceLimit(&orderbook.Order{
 			ID:       askID,
 			UserID:   SystemUserID,
 			Side:     -1,
 			Price:    askPrice,
 			Quantity: qty.Round(8),
 		})
+		if len(askTrades) > 0 && b.onTrades != nil {
+			b.onTrades(askTrades, SystemUserID, -1)
+		}
 		b.activeOrders = append(b.activeOrders, askID)
 	}
 

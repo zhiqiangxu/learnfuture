@@ -18,7 +18,7 @@ func TestBot_PlacesOrdersOnBothSides(t *testing.T) {
 	bot := NewBot(book, pc, Config{
 		SpreadBps: 5, Levels: 3, BaseQty: 0.1,
 		QtyMultiplier: 1.0, RefreshMs: 100, MoveThreshBps: 1,
-	})
+	}, nil)
 
 	// Manually trigger tick
 	bot.tick()
@@ -56,7 +56,7 @@ func TestBot_RequotesOnPriceMove(t *testing.T) {
 	bot := NewBot(book, pc, Config{
 		SpreadBps: 5, Levels: 2, BaseQty: 0.1,
 		QtyMultiplier: 1.0, RefreshMs: 100, MoveThreshBps: 3,
-	})
+	}, nil)
 
 	bot.tick()
 	firstBid, _ := book.BestBid()
@@ -86,7 +86,7 @@ func TestBot_CancelsOldOrdersOnRequote(t *testing.T) {
 	bot := NewBot(book, pc, Config{
 		SpreadBps: 5, Levels: 2, BaseQty: 0.1,
 		QtyMultiplier: 1.0, RefreshMs: 100, MoveThreshBps: 1,
-	})
+	}, nil)
 
 	bot.tick()
 	countAfterFirst := book.OrderCount()
@@ -106,7 +106,7 @@ func TestBot_NoPriceNoOrders(t *testing.T) {
 	book := orderbook.NewBook()
 	pc := cache.NewPriceCache() // price = 0
 
-	bot := NewBot(book, pc, DefaultConfig)
+	bot := NewBot(book, pc, DefaultConfig, nil)
 	bot.tick()
 
 	if book.OrderCount() != 0 {
@@ -122,7 +122,7 @@ func TestBot_StartStop(t *testing.T) {
 	bot := NewBot(book, pc, Config{
 		SpreadBps: 5, Levels: 2, BaseQty: 0.1,
 		QtyMultiplier: 1.0, RefreshMs: 50, MoveThreshBps: 1,
-	})
+	}, nil)
 
 	bot.Start()
 	time.Sleep(200 * time.Millisecond)
@@ -142,7 +142,7 @@ func TestBot_GetStats(t *testing.T) {
 	bot := NewBot(book, pc, Config{
 		SpreadBps: 5, Levels: 3, BaseQty: 0.1,
 		QtyMultiplier: 1.0, RefreshMs: 100, MoveThreshBps: 1,
-	})
+	}, nil)
 
 	bot.tick()
 	stats := bot.GetStats()

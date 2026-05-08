@@ -104,9 +104,6 @@ func NewServiceContext(c config.Config) *ServiceContext {
 	// Order book (real limit order book with price-time priority)
 	ob := orderbook.NewBook()
 
-	// Market maker bot (provides liquidity, tracks external price)
-	mmBot := marketmaker.NewBot(ob, priceCache, marketmaker.DefaultConfig)
-
 	// Clearance (pure calculation layer: margin/fee/PnL/liq price)
 	clearance := clearing.NewClearance(feeCalculator, feeRate, maintRate, forceTpROI)
 
@@ -121,6 +118,13 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		trading.EngineConfig{
 			MaxLeverage: c.Trading.MaxLeverage,
 			MinMargin:   minMargin,
+		},
+	)
+
+	// Market maker bot — onTrades callback processes limit orders matched by MM quotes
+	mmBot := marketmaker.NewBot(ob, priceCache, marketmaker.DefaultConfig,
+		func(trades []*orderbook.Trade, makerUserID int64, makerSide int) {
+			tradingEngine.ProcessTrades(trades, makerUserID, makerSide, 1)
 		},
 	)
 

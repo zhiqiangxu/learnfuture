@@ -169,7 +169,7 @@ func (e *Engine) PlaceMarketOrder(userID int64, side, leverage, marginMode int, 
 	}
 
 	// --- UNIFIED POSITION UPDATE (both sides) ---
-	takerResults := e.processTrades(obTrades, userID, side, leverage)
+	takerResults := e.ProcessTrades(obTrades, userID, side, leverage)
 
 	// --- BUILD RESPONSE ---
 	avgPrice, totalQty := clearing.CalcVWAP(obTrades)
@@ -246,7 +246,7 @@ func (e *Engine) PlaceLimitOrder(userID int64, side, leverage int, margin, limit
 	if len(obTrades) > 0 && remaining == nil {
 		// Crossed spread → immediate fill as taker
 		e.memAccounts.Unfreeze(userID, totalCost) // release frozen, updatePosition will deduct
-		takerResults := e.processTrades(obTrades, userID, side, leverage)
+		takerResults := e.ProcessTrades(obTrades, userID, side, leverage)
 		avgPrice, totalQty := clearing.CalcVWAP(obTrades)
 
 		var resultFee decimal.Decimal
@@ -336,7 +336,7 @@ func (e *Engine) ClosePosition(positionID, userID int64, closeReason int, closeQ
 	e.positionCache.Update(positionID, func(p *cache.CachedPosition) { p.State.Store(cache.PosStateActive) })
 
 	// --- UNIFIED: processTrades handles both sides ---
-	takerResults := e.processTrades(obTrades, userID, -pos.Side, pos.Leverage)
+	takerResults := e.ProcessTrades(obTrades, userID, -pos.Side, pos.Leverage)
 	return e.buildCloseResult(takerResults, pos)
 }
 
@@ -375,7 +375,7 @@ func (e *Engine) ClosePositionInternal(positionID int64, closePrice decimal.Deci
 	e.positionCache.Update(positionID, func(p *cache.CachedPosition) { p.State.Store(cache.PosStateActive) })
 
 	// --- UNIFIED: processTrades handles both sides ---
-	takerResults := e.processTrades(obTrades, pos.UserID, -pos.Side, pos.Leverage)
+	takerResults := e.ProcessTrades(obTrades, pos.UserID, -pos.Side, pos.Leverage)
 	return e.buildCloseResult(takerResults, pos)
 }
 
@@ -459,7 +459,7 @@ func (e *Engine) FillLimitOrder(cachedOrder *cache.CachedOrder) (*PlaceOrderResu
 	}
 
 	e.orderCache.Remove(cachedOrder.ID)
-	takerResults := e.processTrades([]*orderbook.Trade{syntheticTrade}, cachedOrder.UserID, side, leverage)
+	takerResults := e.ProcessTrades([]*orderbook.Trade{syntheticTrade}, cachedOrder.UserID, side, leverage)
 
 	var resultFee decimal.Decimal
 	if len(takerResults) > 0 {
@@ -533,7 +533,8 @@ func decimalPtrToString(d *decimal.Decimal) string {
 // This is the single entry point for all position changes after orderbook matching.
 // takerUserID: the user who submitted the order (gets taker fee)
 // takerLeverage: leverage for new positions opened by the taker
-func (e *Engine) processTrades(trades []*orderbook.Trade, takerUserID int64, takerSide int, takerLeverage int) []*PositionUpdateResult {
+// ProcessTrades handles BOTH sides of every trade using the unified updatePosition.
+func (e *Engine) ProcessTrades(trades []*orderbook.Trade, takerUserID int64, takerSide int, takerLeverage int) []*PositionUpdateResult {
 	var takerResults []*PositionUpdateResult
 	for _, t := range trades {
 		// Process buyer
