@@ -11,19 +11,31 @@ import (
 	"learn_future/internal/model"
 )
 
+// PositionUpdateResult describes what happened when a position was updated.
+type PositionUpdateResult struct {
+	Action       string          // "open", "increase", "reduce", "close"
+	PositionID   int64
+	Side         int
+	EntryPrice   decimal.Decimal
+	Quantity     decimal.Decimal
+	Margin       decimal.Decimal
+	Fee          decimal.Decimal
+	LiqPrice     decimal.Decimal
+	ForceTpPrice decimal.Decimal
+	// Close-specific fields
+	RawPnl      decimal.Decimal
+	RealizedPnl decimal.Decimal
+	FundingPnl  decimal.Decimal
+	NetPnl      decimal.Decimal
+	ClosedQty   decimal.Decimal
+	RemainingQty decimal.Decimal
+	IsPartial   bool
+}
+
 // updatePosition is the unified position update function.
 // It handles all cases: new open, increase, reduce, close, and flip.
 // Both the taker and maker side of every trade go through this same function.
-//
-// Parameters:
-//   - userID: the user whose position is being updated
-//   - tradeSide: 1=buy, -1=sell (the side of this user in the trade)
-//   - qty: trade quantity
-//   - price: trade price
-//   - leverage: leverage for new positions (ignored for closes)
-//   - isMaker: true if this is the maker side (affects fee calculation)
-//   - closeReason: if reducing/closing, the reason (0=normal trade)
-func (e *Engine) updatePosition(userID int64, tradeSide int, qty, price decimal.Decimal, leverage int, isMaker bool, closeReason int) {
+func (e *Engine) updatePosition(userID int64, tradeSide int, qty, price decimal.Decimal, leverage int, isMaker bool, closeReason int) *PositionUpdateResult {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
@@ -33,19 +45,16 @@ func (e *Engine) updatePosition(userID int64, tradeSide int, qty, price decimal.
 	sameDir := e.positionCache.FindByUserSide(userID, tradeSide)
 
 	if opposite != nil {
-		// Opposite direction exists → reduce or close
-		e.handleReduce(userID, opposite, tradeSide, qty, price, leverage, closeReason)
+		return e.handleReduce(userID, opposite, tradeSide, qty, price, leverage, closeReason)
 	} else if sameDir != nil {
-		// Same direction exists → increase position
-		e.handleIncrease(userID, sameDir, qty, price)
+		return e.handleIncrease(userID, sameDir, qty, price)
 	} else {
-		// No existing position → open new
-		e.handleOpen(userID, tradeSide, qty, price, leverage, isMaker)
+		return e.handleOpen(userID, tradeSide, qty, price, leverage, isMaker)
 	}
 }
 
 // handleOpen creates a new position.
-func (e *Engine) handleOpen(userID int64, side int, qty, price decimal.Decimal, leverage int, isMaker bool) {
+func (e *Engine) handleOpen(userID int64, side int, qty, price decimal.Decimal, leverage int, isMaker bool) *PositionUpdateResult {
 	if leverage <= 0 {
 		leverage = 1
 	}
@@ -63,7 +72,7 @@ func (e *Engine) handleOpen(userID int64, side int, qty, price decimal.Decimal, 
 
 	if !e.memAccounts.Deduct(userID, totalCost) {
 		log.Printf("[UpdatePosition] user %d insufficient balance for open, need=%s", userID, totalCost)
-		return
+		return nil
 	}
 
 	liqPrice := e.clearance.CalcLiqPrice(price, leverage, side)
@@ -106,10 +115,16 @@ func (e *Engine) handleOpen(userID int64, side int, qty, price decimal.Decimal, 
 
 	log.Printf("[UpdatePosition] user %d opened %s %s @ %s, margin=%s",
 		userID, sideStr(side), qty, price.StringFixed(2), margin.StringFixed(2))
+
+	return &PositionUpdateResult{
+		Action: "open", PositionID: e.nextPosID, Side: side,
+		EntryPrice: price, Quantity: qty, Margin: margin, Fee: fee,
+		LiqPrice: liqPrice, ForceTpPrice: ftpPrice,
+	}
 }
 
 // handleIncrease adds to an existing same-direction position (weighted average entry price).
-func (e *Engine) handleIncrease(userID int64, existing *cache.CachedPosition, qty, price decimal.Decimal) {
+func (e *Engine) handleIncrease(userID int64, existing *cache.CachedPosition, qty, price decimal.Decimal) *PositionUpdateResult {
 	oldQty, _ := decimal.NewFromString(existing.Quantity)
 	oldEntry, _ := decimal.NewFromString(existing.EntryPrice)
 	oldMargin, _ := decimal.NewFromString(existing.Margin)
@@ -121,7 +136,7 @@ func (e *Engine) handleIncrease(userID int64, existing *cache.CachedPosition, qt
 
 	if !e.memAccounts.Deduct(userID, addMargin) {
 		log.Printf("[UpdatePosition] user %d insufficient balance for increase, need=%s", userID, addMargin)
-		return
+		return nil
 	}
 
 	newLiqPrice := e.clearance.CalcLiqPrice(newEntry, existing.Leverage, existing.Side)
@@ -142,10 +157,16 @@ func (e *Engine) handleIncrease(userID int64, existing *cache.CachedPosition, qt
 
 	log.Printf("[UpdatePosition] user %d increased position %d, qty=%s→%s, entry=%s→%s",
 		userID, existing.ID, oldQty, newQty, oldEntry.StringFixed(2), newEntry.StringFixed(2))
+
+	return &PositionUpdateResult{
+		Action: "increase", PositionID: existing.ID, Side: existing.Side,
+		EntryPrice: newEntry, Quantity: newQty, Margin: newMargin,
+		LiqPrice: newLiqPrice, ForceTpPrice: newFtpPrice,
+	}
 }
 
 // handleReduce reduces or closes an opposite-direction position, and opens remainder if qty exceeds.
-func (e *Engine) handleReduce(userID int64, existing *cache.CachedPosition, tradeSide int, qty, price decimal.Decimal, leverage int, closeReason int) {
+func (e *Engine) handleReduce(userID int64, existing *cache.CachedPosition, tradeSide int, qty, price decimal.Decimal, leverage int, closeReason int) *PositionUpdateResult {
 	existingQty, _ := decimal.NewFromString(existing.Quantity)
 	existingEntry, _ := decimal.NewFromString(existing.EntryPrice)
 	existingMargin, _ := decimal.NewFromString(existing.Margin)
@@ -212,9 +233,18 @@ func (e *Engine) handleReduce(userID int64, existing *cache.CachedPosition, trad
 	})
 
 	// If qty exceeds existing position, open remainder in new direction
-	remaining := qty.Sub(existingQty)
-	if remaining.IsPositive() {
-		e.handleOpen(userID, tradeSide, remaining, price, leverage, false)
+	remainingTradeQty := qty.Sub(existingQty)
+	if remainingTradeQty.IsPositive() {
+		e.handleOpen(userID, tradeSide, remainingTradeQty, price, leverage, false)
+	}
+
+	return &PositionUpdateResult{
+		Action: func() string { if closeQty.Equal(existingQty) { return "close" }; return "reduce" }(),
+		PositionID: existing.ID, Side: existing.Side,
+		EntryPrice: existingEntry, Fee: closeFee,
+		RawPnl: rawPnl, RealizedPnl: realizedPnl, FundingPnl: closeFunding, NetPnl: netPnl,
+		ClosedQty: closeQty, RemainingQty: existingQty.Sub(closeQty),
+		IsPartial: !closeQty.Equal(existingQty),
 	}
 }
 

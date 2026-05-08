@@ -72,6 +72,7 @@ type PlaceOrderResult struct {
 	AvgPrice decimal.Decimal
 	TotalQty decimal.Decimal
 	Slippage decimal.Decimal
+	Fee      decimal.Decimal
 }
 
 type CloseResult struct {
@@ -132,7 +133,7 @@ func (e *Engine) GetForceTpROI() decimal.Decimal         { return e.clearance.Ge
 func (e *Engine) GetMaxLeverage() int                    { return e.maxLeverage }
 
 // ============================================================
-// PlaceMarketOrder: match → clear → memory → settle
+// PlaceMarketOrder: validate → match → processTrades (unified)
 // ============================================================
 func (e *Engine) PlaceMarketOrder(userID int64, side, leverage, marginMode int, margin decimal.Decimal, tp, sl *decimal.Decimal) (*PlaceOrderResult, error) {
 	if marginMode == 0 {
@@ -141,118 +142,66 @@ func (e *Engine) PlaceMarketOrder(userID int64, side, leverage, marginMode int, 
 	if err := e.validateParams(side, leverage, margin); err != nil {
 		return nil, err
 	}
+	if err := e.checkPositionLimit(userID); err != nil {
+		return nil, err
+	}
 
 	refPrice := e.priceCache.GetPrice()
 	if refPrice.IsZero() {
 		return nil, ErrNoPriceAvailable
 	}
 
-	// Pre-clear to get cost estimate
+	// Pre-check balance (actual deduction happens in updatePosition)
 	positionValue := margin.Mul(decimal.NewFromInt(int64(leverage)))
 	tradingFee, _ := e.clearance.CalcTakerFee(positionValue)
 	totalCost := margin.Add(tradingFee)
-
-	if !e.memAccounts.Deduct(userID, totalCost) {
+	if e.memAccounts.GetBalance(userID).LessThan(totalCost) {
 		return nil, model.ErrInsufficientBalance
 	}
 
-	// --- MATCHING: submit to orderbook ---
+	// --- MATCHING ---
 	estimatedQty := position.CalcQuantity(margin, leverage, refPrice)
 	obTrades := e.book.PlaceMarket(&orderbook.Order{
 		ID: e.book.NextOrderID(), UserID: userID, Side: side, Quantity: estimatedQty,
 	})
 	if len(obTrades) == 0 {
-		e.memAccounts.ReturnMarginWithPnl(userID, totalCost, decimal.Zero)
 		return nil, ErrNoLiquidity
 	}
 
-	// --- COUNTERPARTY: process maker side positions (zero-sum) ---
-	e.processCounterpartyTrades(obTrades, side)
+	// --- UNIFIED POSITION UPDATE (both sides) ---
+	takerResults := e.processTrades(obTrades, userID, side, leverage)
 
-	// --- CLEARING: pure calculation ---
-	e.mu.Lock()
-	existing := e.positionCache.FindByUserSide(userID, side)
-	cr := e.clearance.ClearOpen(&clearing.OpenClearingInput{
-		UserID: userID, Side: side, Leverage: leverage, MarginMode: marginMode,
-		Margin: margin, Trades: obTrades, TakeProfit: tp, StopLoss: sl,
-		Existing: existing,
-	})
-
-	if cr.RefundAmount.IsPositive() {
-		e.memAccounts.ReturnMarginWithPnl(userID, cr.RefundAmount, decimal.Zero)
-	}
-
-	// --- MEMORY STATE UPDATE ---
+	// --- BUILD RESPONSE ---
+	avgPrice, totalQty := clearing.CalcVWAP(obTrades)
 	var pos *model.Position
-	if cr.Merged {
-		existing.EntryPrice = cr.NewEntryPrice.String()
-		existing.Quantity = cr.NewQuantity.String()
-		existing.Margin = cr.NewMargin.String()
-		existing.LiqPrice = cr.NewLiqPrice.String()
-		existing.ForceTpPrice = cr.NewFtpPrice.String()
-		if tp != nil { existing.TakeProfit = tp.String() }
-		if sl != nil { existing.StopLoss = sl.String() }
-
+	var resultFee decimal.Decimal
+	if len(takerResults) > 0 {
+		r := takerResults[0]
+		resultFee = r.Fee
 		pos = &model.Position{
-			ID: existing.ID, UserID: userID, Symbol: "BTCUSDT", Side: side,
+			ID: r.PositionID, UserID: userID, Symbol: "BTCUSDT", Side: side,
 			MarginMode: marginMode, Leverage: leverage,
-			EntryPrice: cr.NewEntryPrice, Quantity: cr.NewQuantity,
-			Margin: cr.NewMargin, LiqPrice: cr.NewLiqPrice, ForceTpPrice: cr.NewFtpPrice,
+			EntryPrice: r.EntryPrice, Quantity: r.Quantity,
+			Margin: r.Margin, LiqPrice: r.LiqPrice, ForceTpPrice: r.ForceTpPrice,
 			TakeProfit: tp, StopLoss: sl, Status: model.PositionStatusActive,
 		}
-	} else {
-		if err := e.checkPositionLimit(userID); err != nil {
-			e.mu.Unlock()
-			e.memAccounts.ReturnMarginWithPnl(userID, totalCost, decimal.Zero)
-			return nil, err
+		// Set TP/SL on the cached position
+		if tp != nil || sl != nil {
+			e.positionCache.Update(r.PositionID, func(cp *cache.CachedPosition) {
+				if tp != nil { cp.TakeProfit = tp.String() }
+				if sl != nil { cp.StopLoss = sl.String() }
+			})
 		}
-		e.nextPosID++
-		pos = &model.Position{
-			UserID: userID, Symbol: "BTCUSDT", Side: side,
-			MarginMode: marginMode, Leverage: leverage,
-			EntryPrice: cr.AvgPrice, Quantity: cr.TotalQty,
-			Margin: cr.AdjustedMargin, LiqPrice: cr.LiqPrice, ForceTpPrice: cr.ForceTpPrice,
-			TakeProfit: tp, StopLoss: sl, Status: model.PositionStatusActive,
-		}
-		e.positionCache.Add(&cache.CachedPosition{
-			ID: e.nextPosID, UserID: userID, Side: side, MarginMode: marginMode,
-			Leverage: leverage, EntryPrice: cr.AvgPrice.String(),
-			Quantity: cr.TotalQty.String(), Margin: cr.AdjustedMargin.String(),
-			LiqPrice: cr.LiqPrice.String(), ForceTpPrice: cr.ForceTpPrice.String(),
-			TakeProfit: decimalPtrToString(tp), StopLoss: decimalPtrToString(sl),
-		})
 	}
-	e.mu.Unlock()
-
-	// --- SETTLEMENT: async DB ---
-	order := &model.Order{
-		UserID: userID, Symbol: "BTCUSDT", Side: side,
-		OrderType: model.OrderTypeMarket, Leverage: leverage,
-		Quantity: cr.TotalQty, MarginCost: cr.AdjustedMargin,
-		TakeProfit: tp, StopLoss: sl, Status: model.OrderStatusFilled,
-	}
-	fp := cr.AvgPrice
-	order.FilledPrice = &fp
-
-	trade := &model.Trade{
-		UserID: userID, Symbol: "BTCUSDT", Side: side,
-		Price: cr.AvgPrice, Quantity: cr.TotalQty, Fee: cr.AdjustedFee, IsClose: false,
-	}
-
-	e.settler.Submit(&clearing.SettleEvent{
-		Type: clearing.EventOpenPosition, 		Order: order, Position: pos, Trade: trade,
-	})
-	e.settler.Submit(&clearing.SettleEvent{
-		Type: clearing.EventBalanceUpdate, 		UserID: userID, BalanceDelta: totalCost.Neg(),
-	})
 
 	status := "filled"
-	if cr.Unfilled.IsPositive() { status = "partial" }
+
+	merged := len(takerResults) > 0 && takerResults[0].Action == "increase"
 
 	return &PlaceOrderResult{
-		Order: order, Position: pos, Trade: trade, Trades: obTrades,
-		Status: status, Merged: cr.Merged,
-		AvgPrice: cr.AvgPrice, TotalQty: cr.TotalQty, Slippage: cr.Slippage,
+		Position: pos, Trades: obTrades,
+		Status: status, Merged: merged,
+		AvgPrice: avgPrice, TotalQty: totalQty, Fee: resultFee,
 	}, nil
 }
 
@@ -296,50 +245,17 @@ func (e *Engine) PlaceLimitOrder(userID int64, side, leverage int, margin, limit
 
 	if len(obTrades) > 0 && remaining == nil {
 		// Crossed spread → immediate fill as taker
-		e.processCounterpartyTrades(obTrades, side)
+		e.memAccounts.Unfreeze(userID, totalCost) // release frozen, updatePosition will deduct
+		takerResults := e.processTrades(obTrades, userID, side, leverage)
 		avgPrice, totalQty := clearing.CalcVWAP(obTrades)
-		e.memAccounts.Unfreeze(userID, totalCost)
-		takerFee, _ := e.clearance.CalcTakerFee(positionValue)
-		actualCost := margin.Add(takerFee)
-		e.memAccounts.Deduct(userID, actualCost)
 
-		liqPrice := e.clearance.CalcLiqPrice(avgPrice, leverage, side)
-		ftpPrice := e.clearance.CalcForceTpPrice(avgPrice, leverage, side)
-
-		e.mu.Lock()
-		e.nextPosID++
-		pos := &model.Position{
-			UserID: userID, Symbol: "BTCUSDT", Side: side,
-			Leverage: leverage, EntryPrice: avgPrice, Quantity: totalQty,
-			Margin: margin, LiqPrice: liqPrice, ForceTpPrice: ftpPrice,
-			TakeProfit: tp, StopLoss: sl, Status: model.PositionStatusActive,
+		var resultFee decimal.Decimal
+		if len(takerResults) > 0 {
+			resultFee = takerResults[0].Fee
 		}
-		e.positionCache.Add(&cache.CachedPosition{
-			ID: e.nextPosID, UserID: userID, Side: side, Leverage: leverage,
-			EntryPrice: avgPrice.String(), Quantity: totalQty.String(),
-			Margin: margin.String(), LiqPrice: liqPrice.String(),
-			ForceTpPrice: ftpPrice.String(),
-			TakeProfit: decimalPtrToString(tp), StopLoss: decimalPtrToString(sl),
-		})
-		e.mu.Unlock()
-
-		order := &model.Order{
-			UserID: userID, Symbol: "BTCUSDT", Side: side,
-			OrderType: model.OrderTypeLimit, Leverage: leverage,
-			Price: &limitPrice, Quantity: totalQty, MarginCost: margin,
-			TakeProfit: tp, StopLoss: sl, Status: model.OrderStatusFilled,
-		}
-		order.FilledPrice = &avgPrice
-		trade := &model.Trade{
-			UserID: userID, Symbol: "BTCUSDT", Side: side,
-			Price: avgPrice, Quantity: totalQty, Fee: takerFee, IsClose: false,
-		}
-		e.settler.Submit(&clearing.SettleEvent{
-			Type: clearing.EventOpenPosition, Order: order, Position: pos, Trade: trade,
-		})
 		return &PlaceOrderResult{
-			Order: order, Position: pos, Trade: trade, Trades: obTrades,
-			Status: "filled", AvgPrice: avgPrice, TotalQty: totalQty,
+			Trades: obTrades, Status: "filled",
+			AvgPrice: avgPrice, TotalQty: totalQty, Fee: resultFee,
 		}, nil
 	}
 
@@ -394,6 +310,7 @@ func (e *Engine) ClosePosition(positionID, userID int64, closeReason int, closeQ
 	if !ok || cp.UserID != userID {
 		return nil, ErrPositionNotFound
 	}
+	// CAS to prevent concurrent close — only one caller can proceed
 	if !e.positionCache.TrySetState(positionID, cache.PosStateClosing) {
 		return nil, ErrPositionClosing
 	}
@@ -415,11 +332,12 @@ func (e *Engine) ClosePosition(positionID, userID int64, closeReason int, closeQ
 		return nil, ErrNoLiquidity
 	}
 
-	// --- COUNTERPARTY: process maker side positions (zero-sum) ---
-	e.processCounterpartyTrades(obTrades, -pos.Side)
+	// Reset to Active so updatePosition's FindByUserSide can find it
+	e.positionCache.Update(positionID, func(p *cache.CachedPosition) { p.State.Store(cache.PosStateActive) })
 
-	closePrice, closedQty := clearing.CalcVWAP(obTrades)
-	return e.applyClose(pos, closePrice, closedQty, closeReason)
+	// --- UNIFIED: processTrades handles both sides ---
+	takerResults := e.processTrades(obTrades, userID, -pos.Side, pos.Leverage)
+	return e.buildCloseResult(takerResults, pos)
 }
 
 // ============================================================
@@ -449,17 +367,16 @@ func (e *Engine) ClosePositionInternal(positionID int64, closePrice decimal.Deci
 		ID: e.book.NextOrderID(), UserID: pos.UserID, Side: -pos.Side, Quantity: pos.Quantity,
 	})
 	if len(obTrades) == 0 {
-		// No liquidity — rollback state, cannot close
 		e.positionCache.Update(positionID, func(p *cache.CachedPosition) { p.State.Store(cache.PosStateActive) })
 		return nil, ErrNoLiquidity
 	}
 
-	// --- COUNTERPARTY: process maker side positions (zero-sum) ---
-	e.processCounterpartyTrades(obTrades, -pos.Side)
+	// Reset to Active so updatePosition's FindByUserSide can find it
+	e.positionCache.Update(positionID, func(p *cache.CachedPosition) { p.State.Store(cache.PosStateActive) })
 
-	// Use actual matched price and quantity (may be partial fill)
-	actualPrice, actualQty := clearing.CalcVWAP(obTrades)
-	return e.applyClose(pos, actualPrice, actualQty, closeReason)
+	// --- UNIFIED: processTrades handles both sides ---
+	takerResults := e.processTrades(obTrades, pos.UserID, -pos.Side, pos.Leverage)
+	return e.buildCloseResult(takerResults, pos)
 }
 
 // ============================================================
@@ -525,60 +442,30 @@ func (e *Engine) FillLimitOrder(cachedOrder *cache.CachedOrder) (*PlaceOrderResu
 	side := cachedOrder.Side
 	quantity := cachedOrder.Quantity
 
-	// Process counterparty: the limit order was filled by market activity,
-	// treat market maker (UserID=0) as the counterparty
-	syntheticTrade := &orderbook.Trade{
-		Price: fillPrice, Quantity: quantity,
-	}
-	if side == 1 { // user buys → counterparty sells
+	// Unfreeze margin — updatePosition will handle the actual deduction
+	positionValue := margin.Mul(decimal.NewFromInt(int64(leverage)))
+	fee, _ := e.clearance.CalcMakerFee(positionValue)
+	totalFrozen := margin.Add(fee)
+	e.memAccounts.Unfreeze(cachedOrder.UserID, totalFrozen)
+
+	// Synthetic trade for processTrades (limit order was triggered, not matched via orderbook now)
+	syntheticTrade := &orderbook.Trade{Price: fillPrice, Quantity: quantity}
+	if side == 1 {
 		syntheticTrade.BuyUserID = cachedOrder.UserID
 		syntheticTrade.SellUserID = 0
 	} else {
 		syntheticTrade.SellUserID = cachedOrder.UserID
 		syntheticTrade.BuyUserID = 0
 	}
-	e.processCounterpartyTrades([]*orderbook.Trade{syntheticTrade}, side)
-
-	positionValue := margin.Mul(decimal.NewFromInt(int64(leverage)))
-	fee, _ := e.clearance.CalcMakerFee(positionValue)
-	totalFrozen := margin.Add(fee)
-
-	e.memAccounts.Unfreeze(cachedOrder.UserID, totalFrozen)
-	if !e.memAccounts.Deduct(cachedOrder.UserID, totalFrozen) {
-		return nil, model.ErrInsufficientBalance
-	}
-
-	liqPrice := e.clearance.CalcLiqPrice(fillPrice, leverage, side)
-	ftpPrice := e.clearance.CalcForceTpPrice(fillPrice, leverage, side)
-
-	var tp, sl *decimal.Decimal
-	if cachedOrder.TakeProfit != "" { d, _ := decimal.NewFromString(cachedOrder.TakeProfit); tp = &d }
-	if cachedOrder.StopLoss != "" { d, _ := decimal.NewFromString(cachedOrder.StopLoss); sl = &d }
-
-	pos := &model.Position{
-		UserID: cachedOrder.UserID, Symbol: "BTCUSDT", Side: side,
-		Leverage: leverage, EntryPrice: fillPrice, Quantity: quantity,
-		Margin: margin, LiqPrice: liqPrice, ForceTpPrice: ftpPrice,
-		TakeProfit: tp, StopLoss: sl, Status: model.PositionStatusActive,
-	}
-	trade := &model.Trade{
-		UserID: cachedOrder.UserID, OrderID: cachedOrder.ID, Symbol: "BTCUSDT", Side: side,
-		Price: fillPrice, Quantity: quantity, Fee: fee, IsClose: false,
-	}
 
 	e.orderCache.Remove(cachedOrder.ID)
-	e.mu.Lock()
-	e.nextPosID++
-	e.positionCache.Add(&cache.CachedPosition{
-		ID: e.nextPosID, UserID: cachedOrder.UserID, Side: side, Leverage: leverage,
-		EntryPrice: fillPrice.String(), Quantity: quantity.String(),
-		Margin: margin.String(), LiqPrice: liqPrice.String(), ForceTpPrice: ftpPrice.String(),
-		TakeProfit: cachedOrder.TakeProfit, StopLoss: cachedOrder.StopLoss,
-	})
-	e.mu.Unlock()
+	takerResults := e.processTrades([]*orderbook.Trade{syntheticTrade}, cachedOrder.UserID, side, leverage)
 
-	e.settler.Submit(&clearing.SettleEvent{Type: clearing.EventOpenPosition, Position: pos, Trade: trade})
-	return &PlaceOrderResult{Position: pos, Trade: trade, Status: "filled", AvgPrice: fillPrice, TotalQty: quantity}, nil
+	var resultFee decimal.Decimal
+	if len(takerResults) > 0 {
+		resultFee = takerResults[0].Fee
+	}
+	return &PlaceOrderResult{Status: "filled", AvgPrice: fillPrice, TotalQty: quantity, Fee: resultFee}, nil
 }
 
 // ============================================================
@@ -623,33 +510,57 @@ func cachedToModel(cp *cache.CachedPosition) *model.Position {
 	return pos
 }
 
+// buildCloseResult constructs a CloseResult from updatePosition results.
+func (e *Engine) buildCloseResult(results []*PositionUpdateResult, pos *model.Position) (*CloseResult, error) {
+	if len(results) == 0 {
+		return nil, errors.New("no position update results")
+	}
+	r := results[0]
+	return &CloseResult{
+		RawPnl: r.RawPnl, RealizedPnl: r.RealizedPnl, Fee: r.Fee,
+		FundingPnl: r.FundingPnl, NetPnl: r.NetPnl,
+		ClosePrice: r.EntryPrice, // price at which the close happened
+		ClosedQty: r.ClosedQty, RemainingQty: r.RemainingQty, IsPartial: r.IsPartial,
+	}, nil
+}
+
 func decimalPtrToString(d *decimal.Decimal) string {
 	if d == nil { return "" }
 	return d.String()
 }
 
-// processCounterpartyTrades handles the maker (counterparty) side
-// of every trade using the unified updatePosition function.
-func (e *Engine) processCounterpartyTrades(trades []*orderbook.Trade, takerSide int) {
+// processTrades handles BOTH sides of every trade using the unified updatePosition.
+// This is the single entry point for all position changes after orderbook matching.
+// takerUserID: the user who submitted the order (gets taker fee)
+// takerLeverage: leverage for new positions opened by the taker
+func (e *Engine) processTrades(trades []*orderbook.Trade, takerUserID int64, takerSide int, takerLeverage int) []*PositionUpdateResult {
+	var takerResults []*PositionUpdateResult
 	for _, t := range trades {
-		var cpUserID int64
-		var cpSide int
-		if takerSide == 1 {
-			cpUserID = t.SellUserID
-			cpSide = -1
-		} else {
-			cpUserID = t.BuyUserID
-			cpSide = 1
+		// Process buyer
+		buyerLeverage := 1 // default for maker/market-maker
+		buyerIsMaker := true
+		if t.BuyUserID == takerUserID {
+			buyerLeverage = takerLeverage
+			buyerIsMaker = false
+		}
+		r := e.updatePosition(t.BuyUserID, 1, t.Quantity, t.Price, buyerLeverage, buyerIsMaker, 0)
+		if t.BuyUserID == takerUserID && r != nil {
+			takerResults = append(takerResults, r)
 		}
 
-		// Skip real users — their positions are handled by the taker-side code path.
-		// TODO: when we unify all order paths, remove this filter.
-		if cpUserID != 0 {
-			continue
+		// Process seller
+		sellerLeverage := 1
+		sellerIsMaker := true
+		if t.SellUserID == takerUserID {
+			sellerLeverage = takerLeverage
+			sellerIsMaker = false
 		}
-
-		e.updatePosition(cpUserID, cpSide, t.Quantity, t.Price, 1, true, 0)
+		r = e.updatePosition(t.SellUserID, -1, t.Quantity, t.Price, sellerLeverage, sellerIsMaker, 0)
+		if t.SellUserID == takerUserID && r != nil {
+			takerResults = append(takerResults, r)
+		}
 	}
+	return takerResults
 }
 
 func LogError(op string, err error) {
