@@ -78,10 +78,10 @@ func (m *Monitor) OnPriceUpdate(lastPrice decimal.Decimal) {
 		}
 	}
 
-	// 1. Check limit orders (use lastPrice)
-	m.checkLimitOrders(lastPrice)
+	// Limit orders are now auto-filled by orderbook matching (PlaceLimitOrder + MM onTrades)
+	// No need for Monitor to poll checkLimitOrders.
 
-	// 2. Check all active positions
+	// 1. Check all active positions
 	allPositions := m.positionCache.GetAll()
 
 	// Pre-calculate cross margin account equity for cross-margin liquidation check
@@ -190,26 +190,7 @@ func (m *Monitor) OnPriceUpdate(lastPrice decimal.Decimal) {
 	}
 }
 
-func (m *Monitor) checkLimitOrders(lastPrice decimal.Decimal) {
-	triggered := m.orderCache.GetTriggered(lastPrice)
-	for _, order := range triggered {
-		result, err := m.engine.FillLimitOrder(order)
-		if err != nil {
-			log.Printf("[Monitor] fill limit order %d error: %v", order.ID, err)
-			continue
-		}
-		msg, _ := ws.NewMessage("order_filled", map[string]interface{}{
-			"order_id": order.ID,
-			"price":    order.Price.String(),
-			"qty":      order.Quantity.String(),
-		})
-		m.hub.SendToUser(order.UserID, msg)
-
-		if m.onOrderFill != nil {
-			m.onOrderFill(order.UserID, result)
-		}
-	}
-}
+// checkLimitOrders removed — limit orders are now auto-filled by orderbook matching.
 
 // handleLiquidation processes a liquidation with insurance fund integration.
 func (m *Monitor) handleLiquidation(pos *cache.CachedPosition, lastPrice, entryPrice, quantity, margin decimal.Decimal) {
