@@ -296,6 +296,7 @@ func (e *Engine) PlaceLimitOrder(userID int64, side, leverage int, margin, limit
 
 	if len(obTrades) > 0 && remaining == nil {
 		// Crossed spread → immediate fill as taker
+		e.processCounterpartyTrades(obTrades, side)
 		avgPrice, totalQty := clearing.CalcVWAP(obTrades)
 		e.memAccounts.Unfreeze(userID, totalCost)
 		takerFee, _ := e.clearance.CalcTakerFee(positionValue)
@@ -523,6 +524,20 @@ func (e *Engine) FillLimitOrder(cachedOrder *cache.CachedOrder) (*PlaceOrderResu
 	leverage := cachedOrder.Leverage
 	side := cachedOrder.Side
 	quantity := cachedOrder.Quantity
+
+	// Process counterparty: the limit order was filled by market activity,
+	// treat market maker (UserID=0) as the counterparty
+	syntheticTrade := &orderbook.Trade{
+		Price: fillPrice, Quantity: quantity,
+	}
+	if side == 1 { // user buys → counterparty sells
+		syntheticTrade.BuyUserID = cachedOrder.UserID
+		syntheticTrade.SellUserID = 0
+	} else {
+		syntheticTrade.SellUserID = cachedOrder.UserID
+		syntheticTrade.BuyUserID = 0
+	}
+	e.processCounterpartyTrades([]*orderbook.Trade{syntheticTrade}, side)
 
 	positionValue := margin.Mul(decimal.NewFromInt(int64(leverage)))
 	fee, _ := e.clearance.CalcMakerFee(positionValue)
