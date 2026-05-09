@@ -124,87 +124,105 @@ func (s *Scheduler) settle() {
 		Rate:       s.currentRate,
 		SettleTime: now,
 	}
-	s.fundingModel.CreateRate(fundingRate)
+	if err := s.fundingModel.CreateRate(fundingRate); err != nil {
+		log.Printf("[Funding] create rate error: %v, aborting settlement", err)
+		return
+	}
 
 	// Settle all active positions
 	allPositions := s.positionCache.GetAll()
 	for _, pos := range allPositions {
-		quantity, _ := decimal.NewFromString(pos.Quantity)
-		payment := position.CalcFundingPayment(quantity, currentPrice, s.currentRate, pos.Side)
-
-		// Record settlement
-		posValue := quantity.Mul(currentPrice)
-		settlement := &model.FundingSettlement{
-			UserID:        pos.UserID,
-			PositionID:    pos.ID,
-			Rate:          s.currentRate,
-			PositionValue: posValue,
-			Payment:       payment,
-			SettleTime:    now,
+		if err := s.settlePosition(pos, currentPrice, now); err != nil {
+			log.Printf("[Funding] settle position %d error: %v, skipping", pos.ID, err)
 		}
-		s.fundingModel.CreateSettlement(settlement)
-
-		// Update position funding PnL
-		s.positionCache.Update(pos.ID, func(cp *cache.CachedPosition) {
-			oldFunding, _ := decimal.NewFromString(cp.FundingPnl)
-			cp.FundingPnl = oldFunding.Add(payment).String()
-		})
-		s.positionModel.UpdateFundingPnl(pos.ID, payment)
-
-		// Update account balance — if paying (payment < 0), check if balance is enough
-		if payment.IsNegative() {
-			balance := s.memAccounts.GetBalance(pos.UserID)
-			if balance.Add(payment).IsNegative() {
-				// Insufficient balance: deduct what we can from balance, rest from margin
-				fromBalance := balance // take all available balance
-				fromMargin := payment.Add(fromBalance).Neg() // remaining shortfall
-
-				if fromBalance.IsPositive() {
-					s.memAccounts.AddPnl(pos.UserID, fromBalance.Neg())
-					s.accountModel.AddPnl(pos.UserID, fromBalance.Neg())
-				}
-
-				// Deduct shortfall from position margin and recalculate liq price
-				margin, _ := decimal.NewFromString(pos.Margin)
-				entryPrice, _ := decimal.NewFromString(pos.EntryPrice)
-				newMargin := margin.Sub(fromMargin)
-				if newMargin.IsNegative() {
-					newMargin = decimal.Zero
-				}
-
-				// Recalculate funding PnL for liq price
-				newFundingPnl := func() decimal.Decimal {
-					old, _ := decimal.NewFromString(pos.FundingPnl)
-					return old.Add(payment)
-				}()
-				newLiqPrice := position.CalcLiquidationPriceWithFunding(
-					entryPrice, pos.Leverage, pos.Side, s.maintRate, newFundingPnl, quantity)
-
-				s.positionCache.Update(pos.ID, func(cp *cache.CachedPosition) {
-					cp.Margin = newMargin.String()
-					cp.LiqPrice = newLiqPrice.String()
-				})
-				s.positionModel.UpdateMargin(pos.ID, newMargin, newLiqPrice)
-
-				log.Printf("[Funding] user %d insufficient balance, deducted %s from margin, new liq=%s",
-					pos.UserID, fromMargin, newLiqPrice.StringFixed(2))
-				continue
-			}
-		}
-
-		// Normal case: enough balance
-		s.memAccounts.AddPnl(pos.UserID, payment)
-		s.accountModel.AddPnl(pos.UserID, payment)
-
-		// Notify user
-		msg, _ := ws.NewMessage("funding_settled", map[string]interface{}{
-			"rate":   s.currentRate.String(),
-			"amount": payment.StringFixed(4),
-		})
-		s.hub.SendToUser(pos.UserID, msg)
 	}
 
 	log.Printf("[Funding] settled %d positions, rate=%s", len(allPositions), s.currentRate.String())
+}
+
+func (s *Scheduler) settlePosition(pos *cache.CachedPosition, currentPrice decimal.Decimal, now time.Time) error {
+	quantity, _ := decimal.NewFromString(pos.Quantity)
+	payment := position.CalcFundingPayment(quantity, currentPrice, s.currentRate, pos.Side)
+
+	// Record settlement to DB
+	posValue := quantity.Mul(currentPrice)
+	settlement := &model.FundingSettlement{
+		UserID: pos.UserID, PositionID: pos.ID,
+		Rate: s.currentRate, PositionValue: posValue,
+		Payment: payment, SettleTime: now,
+	}
+	if err := s.fundingModel.CreateSettlement(settlement); err != nil {
+		return fmt.Errorf("create settlement: %w", err)
+	}
+
+	// Update position funding PnL
+	s.positionCache.Update(pos.ID, func(cp *cache.CachedPosition) {
+		oldFunding, _ := decimal.NewFromString(cp.FundingPnl)
+		cp.FundingPnl = oldFunding.Add(payment).String()
+	})
+	if err := s.positionModel.UpdateFundingPnl(pos.ID, payment); err != nil {
+		return fmt.Errorf("update funding pnl: %w", err)
+	}
+
+	// Update account balance
+	if payment.IsNegative() {
+		balance := s.memAccounts.GetBalance(pos.UserID)
+		if balance.Add(payment).IsNegative() {
+			return s.settleInsufficientBalance(pos, payment, balance, quantity)
+		}
+	}
+
+	// Normal case: enough balance
+	s.memAccounts.AddPnl(pos.UserID, payment)
+	if err := s.accountModel.AddPnl(pos.UserID, payment); err != nil {
+		return fmt.Errorf("add pnl: %w", err)
+	}
+
+	// Notify user
+	msg, _ := ws.NewMessage("funding_settled", map[string]interface{}{
+		"rate":   s.currentRate.String(),
+		"amount": payment.StringFixed(4),
+	})
+	s.hub.SendToUser(pos.UserID, msg)
+	return nil
+}
+
+func (s *Scheduler) settleInsufficientBalance(pos *cache.CachedPosition, payment, balance decimal.Decimal, quantity decimal.Decimal) error {
+	fromBalance := balance
+	fromMargin := payment.Add(fromBalance).Neg()
+
+	if fromBalance.IsPositive() {
+		s.memAccounts.AddPnl(pos.UserID, fromBalance.Neg())
+		if err := s.accountModel.AddPnl(pos.UserID, fromBalance.Neg()); err != nil {
+			return fmt.Errorf("deduct balance: %w", err)
+		}
+	}
+
+	margin, _ := decimal.NewFromString(pos.Margin)
+	entryPrice, _ := decimal.NewFromString(pos.EntryPrice)
+	newMargin := margin.Sub(fromMargin)
+	if newMargin.IsNegative() {
+		newMargin = decimal.Zero
+	}
+
+	newFundingPnl := func() decimal.Decimal {
+		old, _ := decimal.NewFromString(pos.FundingPnl)
+		return old.Add(payment)
+	}()
+	newLiqPrice := position.CalcLiquidationPriceWithFunding(
+		entryPrice, pos.Leverage, pos.Side, s.maintRate, newFundingPnl, quantity)
+
+	s.positionCache.Update(pos.ID, func(cp *cache.CachedPosition) {
+		cp.Margin = newMargin.String()
+		cp.LiqPrice = newLiqPrice.String()
+	})
+	if err := s.positionModel.UpdateMargin(pos.ID, newMargin, newLiqPrice); err != nil {
+		return fmt.Errorf("update margin: %w", err)
+	}
+
+	log.Printf("[Funding] user %d insufficient balance, deducted %s from margin, new liq=%s",
+		pos.UserID, fromMargin, newLiqPrice.StringFixed(2))
+	return nil
 }
 
 type premiumIndexResp struct {
