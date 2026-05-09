@@ -132,8 +132,13 @@ func (s *Scheduler) settle() {
 	// Settle all active positions
 	allPositions := s.positionCache.GetAll()
 	for _, pos := range allPositions {
-		if err := s.settlePosition(pos, currentPrice, now); err != nil {
-			log.Printf("[Funding] settle position %d error: %v, skipping", pos.ID, err)
+		for retries := 0; ; retries++ {
+			err := s.settlePosition(pos, currentPrice, now)
+			if err == nil {
+				break
+			}
+			log.Printf("[Funding] settle position %d error (attempt %d): %v", pos.ID, retries+1, err)
+			time.Sleep(time.Duration(min(retries+1, 5)) * time.Second) // backoff: 1s, 2s, 3s, 4s, 5s, 5s, ...
 		}
 	}
 
@@ -144,7 +149,7 @@ func (s *Scheduler) settlePosition(pos *cache.CachedPosition, currentPrice decim
 	quantity, _ := decimal.NewFromString(pos.Quantity)
 	payment := position.CalcFundingPayment(quantity, currentPrice, s.currentRate, pos.Side)
 
-	// Record settlement to DB
+	// Step 1: Write all DB changes first (before touching memory)
 	posValue := quantity.Mul(currentPrice)
 	settlement := &model.FundingSettlement{
 		UserID: pos.UserID, PositionID: pos.ID,
@@ -154,17 +159,11 @@ func (s *Scheduler) settlePosition(pos *cache.CachedPosition, currentPrice decim
 	if err := s.fundingModel.CreateSettlement(settlement); err != nil {
 		return fmt.Errorf("create settlement: %w", err)
 	}
-
-	// Update position funding PnL
-	s.positionCache.Update(pos.ID, func(cp *cache.CachedPosition) {
-		oldFunding, _ := decimal.NewFromString(cp.FundingPnl)
-		cp.FundingPnl = oldFunding.Add(payment).String()
-	})
 	if err := s.positionModel.UpdateFundingPnl(pos.ID, payment); err != nil {
 		return fmt.Errorf("update funding pnl: %w", err)
 	}
 
-	// Update account balance
+	// Step 2: Handle balance — check if balance is sufficient
 	if payment.IsNegative() {
 		balance := s.memAccounts.GetBalance(pos.UserID)
 		if balance.Add(payment).IsNegative() {
@@ -172,11 +171,16 @@ func (s *Scheduler) settlePosition(pos *cache.CachedPosition, currentPrice decim
 		}
 	}
 
-	// Normal case: enough balance
-	s.memAccounts.AddPnl(pos.UserID, payment)
 	if err := s.accountModel.AddPnl(pos.UserID, payment); err != nil {
 		return fmt.Errorf("add pnl: %w", err)
 	}
+
+	// Step 3: DB succeeded — now update memory
+	s.positionCache.Update(pos.ID, func(cp *cache.CachedPosition) {
+		oldFunding, _ := decimal.NewFromString(cp.FundingPnl)
+		cp.FundingPnl = oldFunding.Add(payment).String()
+	})
+	s.memAccounts.AddPnl(pos.UserID, payment)
 
 	// Notify user
 	msg, _ := ws.NewMessage("funding_settled", map[string]interface{}{
@@ -191,8 +195,8 @@ func (s *Scheduler) settleInsufficientBalance(pos *cache.CachedPosition, payment
 	fromBalance := balance
 	fromMargin := payment.Add(fromBalance).Neg()
 
+	// Step 1: DB first
 	if fromBalance.IsPositive() {
-		s.memAccounts.AddPnl(pos.UserID, fromBalance.Neg())
 		if err := s.accountModel.AddPnl(pos.UserID, fromBalance.Neg()); err != nil {
 			return fmt.Errorf("deduct balance: %w", err)
 		}
@@ -212,13 +216,20 @@ func (s *Scheduler) settleInsufficientBalance(pos *cache.CachedPosition, payment
 	newLiqPrice := position.CalcLiquidationPriceWithFunding(
 		entryPrice, pos.Leverage, pos.Side, s.maintRate, newFundingPnl, quantity)
 
-	s.positionCache.Update(pos.ID, func(cp *cache.CachedPosition) {
-		cp.Margin = newMargin.String()
-		cp.LiqPrice = newLiqPrice.String()
-	})
 	if err := s.positionModel.UpdateMargin(pos.ID, newMargin, newLiqPrice); err != nil {
 		return fmt.Errorf("update margin: %w", err)
 	}
+
+	// Step 2: DB succeeded — update memory
+	if fromBalance.IsPositive() {
+		s.memAccounts.AddPnl(pos.UserID, fromBalance.Neg())
+	}
+	s.positionCache.Update(pos.ID, func(cp *cache.CachedPosition) {
+		oldFunding, _ := decimal.NewFromString(cp.FundingPnl)
+		cp.FundingPnl = oldFunding.Add(payment).String()
+		cp.Margin = newMargin.String()
+		cp.LiqPrice = newLiqPrice.String()
+	})
 
 	log.Printf("[Funding] user %d insufficient balance, deducted %s from margin, new liq=%s",
 		pos.UserID, fromMargin, newLiqPrice.StringFixed(2))
