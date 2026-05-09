@@ -19,7 +19,7 @@ func newTestEngine(t *testing.T) (*Engine, *cache.PriceCache, *cache.PositionCac
 	oc := cache.NewOrderCache()
 	fc := fee.NewCalculator(nil)
 	ob := orderbook.NewBook()
-	settler := clearing.NewSettler(nil, nil, nil, nil, nil, 100)
+	settler := clearing.NewSettler(nil, nil, nil, nil, nil, nil, 100)
 	clearance := clearing.NewClearance(fc,
 		decimal.NewFromFloat(0.0004), decimal.NewFromFloat(0.005), decimal.NewFromInt(5))
 

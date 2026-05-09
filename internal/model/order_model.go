@@ -43,8 +43,10 @@ func NewOrderModel(db *sql.DB) *OrderModel {
 	return &OrderModel{db: db}
 }
 
-func (m *OrderModel) Create(o *Order) error {
-	return m.db.QueryRow(
+func (m *OrderModel) Create(o *Order) error { return m.CreateTx(m.db, o) }
+
+func (m *OrderModel) CreateTx(db Executor, o *Order) error {
+	return db.QueryRow(
 		`INSERT INTO orders (user_id, symbol, side, order_type, leverage, price, quantity, margin_cost, take_profit, stop_loss, status)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 		 RETURNING id, created_at, updated_at`,
@@ -53,15 +55,21 @@ func (m *OrderModel) Create(o *Order) error {
 }
 
 func (m *OrderModel) Fill(id int64, filledPrice decimal.Decimal, positionID int64) error {
-	_, err := m.db.Exec(
+	return m.FillTx(m.db, id, filledPrice, positionID)
+}
+
+func (m *OrderModel) FillTx(db Executor, id int64, filledPrice decimal.Decimal, positionID int64) error {
+	_, err := db.Exec(
 		`UPDATE orders SET status = $1, filled_price = $2, position_id = $3, updated_at = NOW() WHERE id = $4`,
 		OrderStatusFilled, filledPrice, positionID, id,
 	)
 	return err
 }
 
-func (m *OrderModel) Cancel(id int64, userID int64) error {
-	result, err := m.db.Exec(
+func (m *OrderModel) Cancel(id int64, userID int64) error { return m.CancelTx(m.db, id, userID) }
+
+func (m *OrderModel) CancelTx(db Executor, id int64, userID int64) error {
+	result, err := db.Exec(
 		`UPDATE orders SET status = $1, updated_at = NOW() WHERE id = $2 AND user_id = $3 AND status = $4`,
 		OrderStatusCanceled, id, userID, OrderStatusPending,
 	)

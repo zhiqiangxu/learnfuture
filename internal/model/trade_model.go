@@ -40,8 +40,10 @@ func NewTradeModel(db *sql.DB) *TradeModel {
 	return &TradeModel{db: db}
 }
 
-func (m *TradeModel) Create(t *Trade) error {
-	return m.db.QueryRow(
+func (m *TradeModel) Create(t *Trade) error { return m.CreateTx(m.db, t) }
+
+func (m *TradeModel) CreateTx(db Executor, t *Trade) error {
+	return db.QueryRow(
 		`INSERT INTO trades (user_id, order_id, position_id, symbol, side, price, quantity, fee, realized_pnl, is_close, close_reason)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 		 RETURNING id, created_at`,

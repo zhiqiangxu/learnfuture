@@ -54,7 +54,11 @@ func (m *FundingModel) GetLatestRate(symbol string) (*FundingRate, error) {
 }
 
 func (m *FundingModel) CreateSettlement(s *FundingSettlement) error {
-	return m.db.QueryRow(
+	return m.CreateSettlementTx(m.db, s)
+}
+
+func (m *FundingModel) CreateSettlementTx(db Executor, s *FundingSettlement) error {
+	return db.QueryRow(
 		`INSERT INTO funding_settlements (user_id, position_id, rate, position_value, payment, settle_time)
 		 VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, created_at`,
 		s.UserID, s.PositionID, s.Rate, s.PositionValue, s.Payment, s.SettleTime,

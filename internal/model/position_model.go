@@ -53,8 +53,10 @@ func NewPositionModel(db *sql.DB) *PositionModel {
 	return &PositionModel{db: db}
 }
 
-func (m *PositionModel) Create(p *Position) error {
-	return m.db.QueryRow(
+func (m *PositionModel) Create(p *Position) error { return m.CreateTx(m.db, p) }
+
+func (m *PositionModel) CreateTx(db Executor, p *Position) error {
+	return db.QueryRow(
 		`INSERT INTO positions (user_id, symbol, side, leverage, entry_price, quantity, margin, liq_price, force_tp_price, take_profit, stop_loss)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 		 RETURNING id, created_at, updated_at, opened_at`,
@@ -105,8 +107,10 @@ func (m *PositionModel) FindByID(id int64) (*Position, error) {
 	return p, err
 }
 
-func (m *PositionModel) Close(id int64, status int) error {
-	_, err := m.db.Exec(
+func (m *PositionModel) Close(id int64, status int) error { return m.CloseTx(m.db, id, status) }
+
+func (m *PositionModel) CloseTx(db Executor, id int64, status int) error {
+	_, err := db.Exec(
 		`UPDATE positions SET status = $1, closed_at = NOW(), updated_at = NOW() WHERE id = $2`,
 		status, id,
 	)
@@ -122,7 +126,11 @@ func (m *PositionModel) UpdateTPSL(id int64, tp, sl *decimal.Decimal) error {
 }
 
 func (m *PositionModel) UpdateFundingPnl(id int64, fundingPayment decimal.Decimal) error {
-	_, err := m.db.Exec(
+	return m.UpdateFundingPnlTx(m.db, id, fundingPayment)
+}
+
+func (m *PositionModel) UpdateFundingPnlTx(db Executor, id int64, fundingPayment decimal.Decimal) error {
+	_, err := db.Exec(
 		`UPDATE positions SET funding_pnl = funding_pnl + $1, updated_at = NOW() WHERE id = $2`,
 		fundingPayment, id,
 	)

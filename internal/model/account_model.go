@@ -49,7 +49,11 @@ func (m *AccountModel) Create(userID int64, initialBalance decimal.Decimal) (*Ac
 }
 
 func (m *AccountModel) UpdateBalance(userID int64, balanceDelta, frozenDelta decimal.Decimal) error {
-	_, err := m.db.Exec(
+	return m.UpdateBalanceTx(m.db, userID, balanceDelta, frozenDelta)
+}
+
+func (m *AccountModel) UpdateBalanceTx(db Executor, userID int64, balanceDelta, frozenDelta decimal.Decimal) error {
+	_, err := db.Exec(
 		`UPDATE accounts SET balance = balance + $1, frozen = frozen + $2, updated_at = NOW() WHERE user_id = $3`,
 		balanceDelta, frozenDelta, userID,
 	)
@@ -57,7 +61,11 @@ func (m *AccountModel) UpdateBalance(userID int64, balanceDelta, frozenDelta dec
 }
 
 func (m *AccountModel) AddPnl(userID int64, pnl decimal.Decimal) error {
-	_, err := m.db.Exec(
+	return m.AddPnlTx(m.db, userID, pnl)
+}
+
+func (m *AccountModel) AddPnlTx(db Executor, userID int64, pnl decimal.Decimal) error {
+	_, err := db.Exec(
 		`UPDATE accounts SET balance = balance + $1, total_pnl = total_pnl + $1, updated_at = NOW() WHERE user_id = $2`,
 		pnl, userID,
 	)
@@ -125,7 +133,11 @@ func (m *AccountModel) UnfreezeMargin(userID int64, amount decimal.Decimal) erro
 
 // ReturnMarginWithPnl returns margin to balance and applies PnL.
 func (m *AccountModel) ReturnMarginWithPnl(userID int64, margin, pnl decimal.Decimal) error {
-	_, err := m.db.Exec(
+	return m.ReturnMarginWithPnlTx(m.db, userID, margin, pnl)
+}
+
+func (m *AccountModel) ReturnMarginWithPnlTx(db Executor, userID int64, margin, pnl decimal.Decimal) error {
+	_, err := db.Exec(
 		`UPDATE accounts SET balance = balance + $1 + $2, total_pnl = total_pnl + $2, updated_at = NOW()
 		 WHERE user_id = $3`,
 		margin, pnl, userID,
@@ -135,7 +147,11 @@ func (m *AccountModel) ReturnMarginWithPnl(userID int64, margin, pnl decimal.Dec
 
 // LiquidateMargin removes margin (total loss) and records the loss in total_pnl.
 func (m *AccountModel) LiquidateMargin(userID int64, margin decimal.Decimal) error {
-	_, err := m.db.Exec(
+	return m.LiquidateMarginTx(m.db, userID, margin)
+}
+
+func (m *AccountModel) LiquidateMarginTx(db Executor, userID int64, margin decimal.Decimal) error {
+	_, err := db.Exec(
 		`UPDATE accounts SET total_pnl = total_pnl - $1, updated_at = NOW() WHERE user_id = $2`,
 		margin, userID,
 	)

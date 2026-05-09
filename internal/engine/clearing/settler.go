@@ -1,6 +1,8 @@
 package clearing
 
 import (
+	"database/sql"
+	"fmt"
 	"log"
 	"time"
 
@@ -55,6 +57,7 @@ type SettleEvent struct {
 }
 
 type Settler struct {
+	db            *sql.DB
 	events        chan *SettleEvent
 	orderModel    *model.OrderModel
 	positionModel *model.PositionModel
@@ -65,6 +68,7 @@ type Settler struct {
 }
 
 func NewSettler(
+	db *sql.DB,
 	orderModel *model.OrderModel,
 	positionModel *model.PositionModel,
 	tradeModel *model.TradeModel,
@@ -76,6 +80,7 @@ func NewSettler(
 		bufferSize = 10000
 	}
 	return &Settler{
+		db:            db,
 		events:        make(chan *SettleEvent, bufferSize),
 		orderModel:    orderModel,
 		positionModel: positionModel,
@@ -148,86 +153,150 @@ func (s *Settler) processEvent(evt *SettleEvent) {
 }
 
 func (s *Settler) settleOpen(evt *SettleEvent) {
-	if evt.Order != nil {
-		if err := s.orderModel.Create(evt.Order); err != nil {
-			log.Printf("[Settler] persist order error: %v", err)
+	if err := s.execTx(func(tx *sql.Tx) error {
+		if evt.Order != nil {
+			if err := s.orderModel.CreateTx(tx, evt.Order); err != nil {
+				return fmt.Errorf("persist order: %w", err)
+			}
 		}
-	}
-	if evt.Position != nil {
-		if err := s.positionModel.Create(evt.Position); err != nil {
-			log.Printf("[Settler] persist position error: %v", err)
+		if evt.Position != nil {
+			if err := s.positionModel.CreateTx(tx, evt.Position); err != nil {
+				return fmt.Errorf("persist position: %w", err)
+			}
+			if evt.Order != nil && evt.Position.ID > 0 {
+				if err := s.orderModel.FillTx(tx, evt.Order.ID, evt.Position.EntryPrice, evt.Position.ID); err != nil {
+					return fmt.Errorf("fill order: %w", err)
+				}
+			}
 		}
-		if evt.Order != nil && evt.Position.ID > 0 {
-			filledPrice := evt.Position.EntryPrice
-			s.orderModel.Fill(evt.Order.ID, filledPrice, evt.Position.ID)
+		if evt.Trade != nil {
+			if evt.Position != nil && evt.Position.ID > 0 {
+				evt.Trade.PositionID = &evt.Position.ID
+			}
+			if err := s.tradeModel.CreateTx(tx, evt.Trade); err != nil {
+				return fmt.Errorf("persist trade: %w", err)
+			}
 		}
-	}
-	if evt.Trade != nil {
-		if evt.Position != nil && evt.Position.ID > 0 {
-			evt.Trade.PositionID = &evt.Position.ID
+		if evt.UserID > 0 && !evt.BalanceDelta.IsZero() {
+			if err := s.accountModel.UpdateBalanceTx(tx, evt.UserID, evt.BalanceDelta, evt.FrozenDelta); err != nil {
+				return fmt.Errorf("update balance: %w", err)
+			}
 		}
-		if err := s.tradeModel.Create(evt.Trade); err != nil {
-			log.Printf("[Settler] persist trade error: %v", err)
-		}
-	}
-	// Balance update (combined into open event)
-	if evt.UserID > 0 && !evt.BalanceDelta.IsZero() {
-		s.accountModel.UpdateBalance(evt.UserID, evt.BalanceDelta, evt.FrozenDelta)
+		return nil
+	}); err != nil {
+		log.Printf("[Settler] settleOpen error: %v", err)
 	}
 }
 
+// execTx runs a function within a database transaction.
+func (s *Settler) execTx(fn func(tx *sql.Tx) error) error {
+	if s.db == nil {
+		return nil // no DB (test mode)
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	if err := fn(tx); err != nil {
+		tx.Rollback()
+		return err
+	}
+	return tx.Commit()
+}
+
 func (s *Settler) settleClose(evt *SettleEvent) {
-	closeStatus := model.PositionStatusClosed
-	switch evt.CloseReason {
-	case model.CloseReasonLiquidation:
-		closeStatus = model.PositionStatusLiquidated
-	case model.CloseReasonForceTp:
-		closeStatus = model.PositionStatusForceTp
-	}
-	s.positionModel.Close(evt.PositionID, closeStatus)
-
-	if evt.Order != nil {
-		s.orderModel.Create(evt.Order)
-	}
-	if evt.Trade != nil {
-		s.tradeModel.Create(evt.Trade)
-	}
-
-	// Account settlement: use Margin (not Fee) for margin operations
-	if evt.CloseReason == model.CloseReasonLiquidation {
-		// Liquidation: margin already deducted at open, just record the loss in total_pnl
-		s.accountModel.LiquidateMargin(evt.UserID, evt.Margin)
-	} else {
-		// Normal close: return margin + net PnL
-		s.accountModel.ReturnMarginWithPnl(evt.UserID, evt.Margin, evt.NetPnl)
+	if err := s.execTx(func(tx *sql.Tx) error {
+		closeStatus := model.PositionStatusClosed
+		switch evt.CloseReason {
+		case model.CloseReasonLiquidation:
+			closeStatus = model.PositionStatusLiquidated
+		case model.CloseReasonForceTp:
+			closeStatus = model.PositionStatusForceTp
+		}
+		if err := s.positionModel.CloseTx(tx, evt.PositionID, closeStatus); err != nil {
+			return fmt.Errorf("close position: %w", err)
+		}
+		if evt.Order != nil {
+			if err := s.orderModel.CreateTx(tx, evt.Order); err != nil {
+				return fmt.Errorf("persist close order: %w", err)
+			}
+		}
+		if evt.Trade != nil {
+			if err := s.tradeModel.CreateTx(tx, evt.Trade); err != nil {
+				return fmt.Errorf("persist close trade: %w", err)
+			}
+		}
+		if evt.UserID > 0 {
+			if evt.CloseReason == model.CloseReasonLiquidation {
+				if err := s.accountModel.LiquidateMarginTx(tx, evt.UserID, evt.Margin); err != nil {
+					return fmt.Errorf("liquidate margin: %w", err)
+				}
+			} else {
+				if err := s.accountModel.ReturnMarginWithPnlTx(tx, evt.UserID, evt.Margin, evt.NetPnl); err != nil {
+					return fmt.Errorf("return margin: %w", err)
+				}
+			}
+		}
+		return nil
+	}); err != nil {
+		log.Printf("[Settler] settleClose error: %v", err)
 	}
 }
 
 func (s *Settler) settleCancelOrder(evt *SettleEvent) {
-	s.orderModel.Cancel(evt.OrderID, evt.UserID)
-	if evt.UserID > 0 && !evt.BalanceDelta.IsZero() {
-		s.accountModel.UpdateBalance(evt.UserID, evt.BalanceDelta, evt.FrozenDelta)
+	if err := s.execTx(func(tx *sql.Tx) error {
+		if err := s.orderModel.CancelTx(tx, evt.OrderID, evt.UserID); err != nil {
+			return fmt.Errorf("cancel order: %w", err)
+		}
+		if evt.UserID > 0 && !evt.BalanceDelta.IsZero() {
+			if err := s.accountModel.UpdateBalanceTx(tx, evt.UserID, evt.BalanceDelta, evt.FrozenDelta); err != nil {
+				return fmt.Errorf("update balance: %w", err)
+			}
+		}
+		return nil
+	}); err != nil {
+		log.Printf("[Settler] settleCancelOrder error: %v", err)
 	}
 }
 
 func (s *Settler) settleBalanceUpdate(evt *SettleEvent) {
-	if !evt.BalanceDelta.IsZero() || !evt.FrozenDelta.IsZero() {
-		s.accountModel.UpdateBalance(evt.UserID, evt.BalanceDelta, evt.FrozenDelta)
-	}
-	if !evt.PnlDelta.IsZero() {
-		s.accountModel.AddPnl(evt.UserID, evt.PnlDelta)
+	if err := s.execTx(func(tx *sql.Tx) error {
+		if !evt.BalanceDelta.IsZero() || !evt.FrozenDelta.IsZero() {
+			if err := s.accountModel.UpdateBalanceTx(tx, evt.UserID, evt.BalanceDelta, evt.FrozenDelta); err != nil {
+				return fmt.Errorf("update balance: %w", err)
+			}
+		}
+		if !evt.PnlDelta.IsZero() {
+			if err := s.accountModel.AddPnlTx(tx, evt.UserID, evt.PnlDelta); err != nil {
+				return fmt.Errorf("add pnl: %w", err)
+			}
+		}
+		return nil
+	}); err != nil {
+		log.Printf("[Settler] settleBalanceUpdate error: %v", err)
 	}
 }
 
 func (s *Settler) settleFunding(evt *SettleEvent) {
-	if evt.FundingSettlement != nil {
-		s.fundingModel.CreateSettlement(evt.FundingSettlement)
-	}
-	if evt.PositionID > 0 && !evt.FundingPnlDelta.IsZero() {
-		s.positionModel.UpdateFundingPnl(evt.PositionID, evt.FundingPnlDelta)
-	}
-	if evt.UserID > 0 && !evt.PnlDelta.IsZero() {
-		s.accountModel.AddPnl(evt.UserID, evt.PnlDelta)
+	if err := s.execTx(func(tx *sql.Tx) error {
+		if evt.FundingSettlement != nil {
+			if err := s.fundingModel.CreateSettlementTx(tx, evt.FundingSettlement); err != nil {
+				return fmt.Errorf("create settlement: %w", err)
+			}
+		}
+		if evt.PositionID > 0 && !evt.FundingPnlDelta.IsZero() {
+			if err := s.positionModel.UpdateFundingPnlTx(tx, evt.PositionID, evt.FundingPnlDelta); err != nil {
+				return fmt.Errorf("update funding pnl: %w", err)
+			}
+		}
+		if evt.UserID > 0 && !evt.PnlDelta.IsZero() {
+			if err := s.accountModel.AddPnlTx(tx, evt.UserID, evt.PnlDelta); err != nil {
+				return fmt.Errorf("add pnl: %w", err)
+			}
+		}
+		return nil
+	}); err != nil {
+		log.Printf("[Settler] settleFunding error: %v", err)
 	}
 }
 

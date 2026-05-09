@@ -27,7 +27,7 @@ func NewTestServiceContext() *svc.ServiceContext {
 	go hub.Run()
 
 	feeCalc := fee.NewCalculator(nil)
-	settler := clearing.NewSettler(nil, nil, nil, nil, nil, 100)
+	settler := clearing.NewSettler(nil, nil, nil, nil, nil, nil, 100)
 	markPriceEngine := markprice.NewEngine(markprice.EngineConfig{BasisAlpha: 0.1})
 	insuranceFund := insurance.NewFund(decimal.NewFromInt(1000000))
 

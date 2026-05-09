@@ -120,7 +120,7 @@ func NewServiceContext(c config.Config) *ServiceContext {
 	clearance := clearing.NewClearance(feeCalculator, feeRate, maintRate, forceTpROI)
 
 	// Settlement (DB persistence layer)
-	settler := clearing.NewSettler(orderModel, positionModel, tradeModel, accountModel, fundingModel, 10000)
+	settler := clearing.NewSettler(db, orderModel, positionModel, tradeModel, accountModel, fundingModel, 10000)
 
 	// Matching engine (orderbook matching + memory state)
 	tradingEngine := trading.NewEngine(
