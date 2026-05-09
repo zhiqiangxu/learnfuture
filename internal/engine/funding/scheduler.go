@@ -132,13 +132,25 @@ func (s *Scheduler) settle() {
 	// Settle all active positions
 	allPositions := s.positionCache.GetAll()
 	for _, pos := range allPositions {
+		// Skip market maker — no DB account, settled in memory only
+		if pos.UserID == 0 {
+			quantity, _ := decimal.NewFromString(pos.Quantity)
+			payment := position.CalcFundingPayment(quantity, currentPrice, s.currentRate, pos.Side)
+			s.memAccounts.AddPnl(pos.UserID, payment)
+			s.positionCache.Update(pos.ID, func(cp *cache.CachedPosition) {
+				oldFunding, _ := decimal.NewFromString(cp.FundingPnl)
+				cp.FundingPnl = oldFunding.Add(payment).String()
+			})
+			continue
+		}
+
 		for retries := 0; ; retries++ {
 			err := s.settlePosition(pos, currentPrice, now)
 			if err == nil {
 				break
 			}
 			log.Printf("[Funding] settle position %d error (attempt %d): %v", pos.ID, retries+1, err)
-			time.Sleep(time.Duration(min(retries+1, 5)) * time.Second) // backoff: 1s, 2s, 3s, 4s, 5s, 5s, ...
+			time.Sleep(time.Duration(min(retries+1, 5)) * time.Second)
 		}
 	}
 
