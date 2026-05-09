@@ -107,10 +107,11 @@ func (a *KlineAggregator) updateBase(price decimal.Decimal, ts time.Time) {
 			a.closeAndCascade(bar, cfg)
 
 			// Fill gaps: generate flat candles for skipped periods
+			// Cap at 60s to avoid flooding on long disconnects
+			maxGapDuration := 60 * time.Second
 			lastClose := bar.Close
 			gapStart := bar.OpenTime.Add(cfg.Duration)
-			maxFill := 3
-			for filled := 0; gapStart.Before(openTime) && filled < maxFill; filled++ {
+			for gapStart.Before(openTime) && openTime.Sub(gapStart) <= maxGapDuration {
 				gapEnd := gapStart.Add(cfg.Duration)
 				flatBar := &KlineBar{
 					Interval: "1s", OpenTime: gapStart, CloseTime: gapEnd,

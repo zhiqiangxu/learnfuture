@@ -69,8 +69,8 @@ func NewServiceContext(c config.Config) *ServiceContext {
 	if err := db.Ping(); err != nil {
 		log.Fatalf("failed to ping database: %v", err)
 	}
-	db.SetMaxOpenConns(25)
-	db.SetMaxIdleConns(10)
+	db.SetMaxOpenConns(c.Postgres.MaxOpenConns)
+	db.SetMaxIdleConns(c.Postgres.MaxIdleConns)
 
 	// Initialize models
 	userModel := model.NewUserModel(db)
@@ -92,11 +92,23 @@ func NewServiceContext(c config.Config) *ServiceContext {
 	hub := ws.NewHub()
 	go hub.Run()
 
-	// Parse trading config
-	feeRate, _ := decimal.NewFromString(c.Trading.FeeRate)
-	maintRate, _ := decimal.NewFromString(c.Trading.MaintenanceMarginRate)
-	forceTpROI, _ := decimal.NewFromString(c.Trading.ForceTpROI)
-	minMargin, _ := decimal.NewFromString(c.Trading.MinMargin)
+	// Parse trading config — fail fast on invalid values
+	feeRate, err := decimal.NewFromString(c.Trading.FeeRate)
+	if err != nil {
+		log.Fatalf("invalid FeeRate %q: %v", c.Trading.FeeRate, err)
+	}
+	maintRate, err := decimal.NewFromString(c.Trading.MaintenanceMarginRate)
+	if err != nil {
+		log.Fatalf("invalid MaintenanceMarginRate %q: %v", c.Trading.MaintenanceMarginRate, err)
+	}
+	forceTpROI, err := decimal.NewFromString(c.Trading.ForceTpROI)
+	if err != nil {
+		log.Fatalf("invalid ForceTpROI %q: %v", c.Trading.ForceTpROI, err)
+	}
+	minMargin, err := decimal.NewFromString(c.Trading.MinMargin)
+	if err != nil {
+		log.Fatalf("invalid MinMargin %q: %v", c.Trading.MinMargin, err)
+	}
 
 	// Fee calculator with Maker/Taker tiers
 	feeCalculator := fee.NewCalculator(nil)

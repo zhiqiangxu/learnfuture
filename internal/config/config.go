@@ -6,7 +6,9 @@ type Config struct {
 	rest.RestConf
 
 	Postgres struct {
-		DataSource string
+		DataSource   string
+		MaxOpenConns int `json:",optional,default=25"`
+		MaxIdleConns int `json:",optional,default=10"`
 	}
 
 	JWT struct {

@@ -951,11 +951,9 @@ function drawKlines(klines) {
     const wickW = Math.max(1, Math.round(w * 0.15))
     ctx.fillRect(x + (w - wickW) / 2, yH, wickW, yL - yH)
 
-    // Body — full width, solid color, min 6px height
-    const bodyH2 = Math.max(bodyH, 6)
-    const bodyTop2 = isUp ? (yC - bodyH2 / 2) : (yO - bodyH2 / 2)
+    // Body — full width, solid color
     ctx.fillStyle = color
-    ctx.fillRect(x, bodyTop2, w + 1, bodyH2)
+    ctx.fillRect(x, bodyTop, w + 1, bodyH)
   })
 
   // Current price line
