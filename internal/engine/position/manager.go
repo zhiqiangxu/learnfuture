@@ -40,16 +40,22 @@ func CalcMarginRatio(margin, unrealizedPnl, quantity, currentPrice decimal.Decim
 	return margin.Add(unrealizedPnl).Div(positionValue)
 }
 
-// CalcLiquidationPrice calculates the liquidation price.
+// CalcBankruptcyPrice calculates the price where margin = 0 (total loss).
+// Long: entryPrice * (1 - 1/leverage)
+// Short: entryPrice * (1 + 1/leverage)
+func CalcBankruptcyPrice(entryPrice decimal.Decimal, leverage int, side int) decimal.Decimal {
+	lev := decimal.NewFromInt(int64(leverage))
+	invLev := decimal.NewFromInt(1).Div(lev)
+	if side == 1 { // long
+		return entryPrice.Mul(decimal.NewFromInt(1).Sub(invLev))
+	}
+	return entryPrice.Mul(decimal.NewFromInt(1).Add(invLev))
+}
+
+// CalcLiquidationPrice calculates the liquidation price (where margin ratio = maintenance margin rate).
 //
-// Derived from: margin + fundingPnL + unrealizedPnL = maintenanceMargin
-//
-// Long:  liqPrice = entryPrice×(1-1/L)/(1-r) - F/(qty×(1-r))
-// Short: liqPrice = entryPrice×(1+1/L)/(1+r) - F/(qty×(1+r))
-//
-// Where F = cumulative funding PnL (positive=received, negative=paid)
-// F<0 (paid funding) → long liq price moves UP (more dangerous)
-// F>0 (received funding) → long liq price moves DOWN (safer)
+// Long:  liqPrice = entryPrice×(1-1/L)/(1-r)
+// Short: liqPrice = entryPrice×(1+1/L)/(1+r)
 func CalcLiquidationPrice(entryPrice decimal.Decimal, leverage int, side int, maintenanceRate decimal.Decimal) decimal.Decimal {
 	return CalcLiquidationPriceWithFunding(entryPrice, leverage, side, maintenanceRate, decimal.Zero, decimal.Zero)
 }

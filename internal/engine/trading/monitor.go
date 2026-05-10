@@ -30,6 +30,7 @@ type Monitor struct {
 	hub             *ws.Hub
 	markPriceEngine *markprice.Engine
 	insuranceFund   *insurance.Fund
+	liqEngine       *LiquidationEngine
 	onOrderFill     OrderFillCallback
 	onPositionClose PositionCloseCallback
 }
@@ -49,6 +50,7 @@ func NewMonitor(
 		hub:             hub,
 		markPriceEngine: markPriceEngine,
 		insuranceFund:   insuranceFund,
+		liqEngine:       NewLiquidationEngine(engine, positionCache, engine.GetBook()),
 	}
 }
 
@@ -199,37 +201,35 @@ func (m *Monitor) OnPriceUpdate(lastPrice decimal.Decimal) {
 		})
 		m.hub.SendToUser(pos.UserID, msg)
 	}
+
+	// Liquidation engine: attempt to dispose network positions on the orderbook
+	m.liqEngine.OnTick(lastPrice)
 }
 
 
 // handleLiquidation processes a liquidation with insurance fund integration.
 func (m *Monitor) handleLiquidation(pos *cache.CachedPosition, lastPrice, entryPrice, quantity, margin decimal.Decimal) {
-	// Liquidation settles directly via UpdatePosition — does NOT go through orderbook.
-	// This guarantees liquidation always succeeds regardless of orderbook liquidity.
-	// The reverse side (market maker) also gets position updated via the same call.
-	closeSide := -pos.Side // sell to close long, buy to close short
-	updateResult := m.engine.UpdatePosition(pos.UserID, closeSide, quantity, lastPrice, pos.Leverage, false, model.CloseReasonLiquidation)
-	if updateResult == nil {
-		log.Printf("[Monitor] liquidate position %d error: UpdatePosition returned nil", pos.ID)
-		return
-	}
+	// Step 1: Transfer position from user to liquidation engine at bankruptcy price.
+	// Does NOT go through orderbook. User loses all margin. ∑longs ≡ ∑shorts maintained.
+	bankruptcyPrice := position.CalcBankruptcyPrice(entryPrice, pos.Leverage, pos.Side)
+	m.liqEngine.TakeOver(pos, bankruptcyPrice)
+
+	// User's result: lost all margin at bankruptcy price
+	rawPnl := position.CalcUnrealizedPnL(entryPrice, bankruptcyPrice, quantity, pos.Side)
 	result := &CloseResult{
-		RawPnl: updateResult.RawPnl, RealizedPnl: updateResult.RealizedPnl,
-		Fee: updateResult.Fee, FundingPnl: updateResult.FundingPnl,
-		NetPnl: updateResult.NetPnl, ClosedQty: updateResult.ClosedQty,
+		RawPnl: rawPnl, RealizedPnl: rawPnl, NetPnl: rawPnl,
+		ClosePrice: bankruptcyPrice, ClosedQty: quantity,
 	}
 
-	// Process through insurance fund
+	// Step 2: Insurance fund handles surplus/deficit.
+	// The liquidation engine will later close its position on the market.
+	// Difference between market close price and bankruptcy price goes to insurance fund.
 	if m.insuranceFund != nil {
 		liqResult := m.insuranceFund.ProcessLiquidation(
 			entryPrice, lastPrice, quantity, pos.Side, pos.Leverage,
 		)
 
 		if liqResult.NeedADL {
-			// Calculate bankruptcy price: price where margin goes to zero
-			// Long: bankruptcyPrice = entryPrice - margin/quantity
-			// Short: bankruptcyPrice = entryPrice + margin/quantity
-			bankruptcyPrice := entryPrice.Sub(margin.Div(quantity).Mul(decimal.NewFromInt(int64(pos.Side))))
 			log.Printf("[Monitor] insurance fund depleted, triggering ADL for deficit=%s bankruptcyPrice=%s", liqResult.ADLDeficit, bankruptcyPrice)
 			m.triggerADL(pos.Side, liqResult.ADLDeficit, bankruptcyPrice, lastPrice)
 		}

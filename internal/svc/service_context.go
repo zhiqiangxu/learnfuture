@@ -356,6 +356,8 @@ func (svc *ServiceContext) loadAccountsToMemory() (int, error) {
 	}
 	// Ensure market maker (SystemUserID=0) has a large account for zero-sum trading
 	memAccounts.Load(0, decimal.NewFromInt(100_000_000), decimal.Zero)
+	// Liquidation engine account (UserID=-1) for holding taken-over positions
+	memAccounts.Load(-1, decimal.NewFromInt(100_000_000), decimal.Zero)
 
 	return count, rows.Err()
 }
