@@ -115,7 +115,13 @@ func (m *Monitor) OnPriceUpdate(lastPrice decimal.Decimal) {
 	// Track which users have already been cross-liquidated to avoid double processing
 	crossLiquidated := make(map[int64]bool)
 
-	for _, pos := range allPositions {
+	for _, snapshotPos := range allPositions {
+		// Re-read position from cache to get latest state (snapshot may be stale)
+		pos, ok := m.positionCache.Get(snapshotPos.ID)
+		if !ok || pos.State.Load() != cache.PosStateActive {
+			continue // position was closed/modified since snapshot
+		}
+
 		entryPrice, _ := decimal.NewFromString(pos.EntryPrice)
 		quantity, _ := decimal.NewFromString(pos.Quantity)
 		margin, _ := decimal.NewFromString(pos.Margin)

@@ -29,6 +29,7 @@ type Scheduler struct {
 	done          chan struct{}
 	currentRate   decimal.Decimal
 	maintRate     decimal.Decimal
+	withLock      func(func()) // Engine.WithLock for atomic position/account updates
 }
 
 func NewScheduler(
@@ -42,6 +43,7 @@ func NewScheduler(
 	fundingModel *model.FundingModel,
 	hub *ws.Hub,
 	maintRate decimal.Decimal,
+	withLock func(func()),
 ) *Scheduler {
 	return &Scheduler{
 		settleHours:   settleHours,
@@ -55,6 +57,7 @@ func NewScheduler(
 		hub:           hub,
 		done:          make(chan struct{}),
 		maintRate:     maintRate,
+		withLock:      withLock,
 	}
 }
 
@@ -175,24 +178,32 @@ func (s *Scheduler) settlePosition(pos *cache.CachedPosition, currentPrice decim
 		return fmt.Errorf("update funding pnl: %w", err)
 	}
 
-	// Step 2: Handle balance — check if balance is sufficient
-	if payment.IsNegative() {
-		balance := s.memAccounts.GetBalance(pos.UserID)
-		if balance.Add(payment).IsNegative() {
-			return s.settleInsufficientBalance(pos, payment, balance, quantity)
+	// Step 2+3: Check balance and update memory atomically (holding engine lock)
+	// This prevents race with concurrent trades modifying the same position/account.
+	var memErr error
+	s.withLock(func() {
+		if payment.IsNegative() {
+			balance := s.memAccounts.GetBalance(pos.UserID)
+			if balance.Add(payment).IsNegative() {
+				memErr = s.settleInsufficientBalance(pos, payment, balance, quantity)
+				return
+			}
 		}
-	}
 
-	if err := s.accountModel.AddPnl(pos.UserID, payment); err != nil {
-		return fmt.Errorf("add pnl: %w", err)
-	}
+		if err := s.accountModel.AddPnl(pos.UserID, payment); err != nil {
+			memErr = fmt.Errorf("add pnl: %w", err)
+			return
+		}
 
-	// Step 3: DB succeeded — now update memory
-	s.positionCache.Update(pos.ID, func(cp *cache.CachedPosition) {
-		oldFunding, _ := decimal.NewFromString(cp.FundingPnl)
-		cp.FundingPnl = oldFunding.Add(payment).String()
+		s.positionCache.Update(pos.ID, func(cp *cache.CachedPosition) {
+			oldFunding, _ := decimal.NewFromString(cp.FundingPnl)
+			cp.FundingPnl = oldFunding.Add(payment).String()
+		})
+		s.memAccounts.AddPnl(pos.UserID, payment)
 	})
-	s.memAccounts.AddPnl(pos.UserID, payment)
+	if memErr != nil {
+		return memErr
+	}
 
 	// Notify user
 	msg, _ := ws.NewMessage("funding_settled", map[string]interface{}{

@@ -68,10 +68,11 @@ func (le *LiquidationEngine) TakeOver(pos *cache.CachedPosition, bankruptcyPrice
 		syntheticTrade.SellUserID = LiquidationUserID
 	}
 
-	// Reset position state so ProcessTrades can find it
-	le.positionCache.Update(pos.ID, func(p *cache.CachedPosition) {
-		p.State.Store(cache.PosStateActive)
-	})
+	// Verify position is still active (may have been closed by concurrent operation)
+	if pos.State.Load() != cache.PosStateActive {
+		log.Printf("[LiquidationEngine] position %d state is %d (not active), skipping TakeOver", pos.ID, pos.State.Load())
+		return
+	}
 
 	// ProcessTrades handles both sides:
 	// - User: opposite trade closes their position (at bankruptcy price, margin = 0)

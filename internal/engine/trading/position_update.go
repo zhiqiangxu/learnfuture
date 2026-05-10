@@ -35,6 +35,10 @@ type PositionUpdateResult struct {
 // UpdatePosition is the unified position update function (exported for Monitor/ADL).
 // It handles all cases: new open, increase, reduce, close, and flip.
 // Both the taker and maker side of every trade go through this same function.
+//
+// NOTE: Memory is updated first, DB async via Settler. If process crashes between
+// memory update and DB write, state will be inconsistent on restart (DB lags behind).
+// This is a known trade-off for low-latency matching. Future: use Raft for replication.
 func (e *Engine) UpdatePosition(userID int64, tradeSide int, qty, price decimal.Decimal, leverage int, isMaker bool, closeReason int) *PositionUpdateResult {
 	e.mu.Lock()
 	defer e.mu.Unlock()

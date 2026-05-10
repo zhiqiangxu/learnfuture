@@ -235,6 +235,7 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		fundingModel,
 		hub,
 		maintRate,
+		tradingEngine.WithLock,
 	)
 
 	return &ServiceContext{

@@ -66,7 +66,7 @@ func NewTestServiceContext() *svc.ServiceContext {
 
 	fundingScheduler := funding.NewScheduler(
 		[]int{0, 8, 16}, "", priceCache, positionCache,
-		tradingEngine.GetMemAccounts(), nil, nil, nil, hub, decimal.NewFromFloat(0.005),
+		tradingEngine.GetMemAccounts(), nil, nil, nil, hub, decimal.NewFromFloat(0.005), tradingEngine.WithLock,
 	)
 
 	return &svc.ServiceContext{
