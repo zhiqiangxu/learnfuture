@@ -1,6 +1,7 @@
 package cache
 
 import (
+	"log"
 	"sync"
 
 	"github.com/shopspring/decimal"
@@ -121,7 +122,13 @@ func (c *AccountCache) AddPnl(userID int64, pnl decimal.Decimal) {
 	if !ok {
 		return
 	}
-	acc.Balance = acc.Balance.Add(pnl)
+	newBalance := acc.Balance.Add(pnl)
+	if newBalance.IsNegative() {
+		log.Printf("[AccountCache] WARNING: AddPnl would make user %d balance negative (%s + %s = %s), clamping to 0",
+			userID, acc.Balance, pnl, newBalance)
+		newBalance = decimal.Zero
+	}
+	acc.Balance = newBalance
 }
 
 // Reset resets account to initial balance.

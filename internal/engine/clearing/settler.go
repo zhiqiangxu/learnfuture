@@ -95,12 +95,14 @@ func NewSettler(
 }
 
 // Submit sends a settle event to the async processing queue.
+// Blocks if the queue is full — never drops events.
 func (s *Settler) Submit(event *SettleEvent) {
 	event.Timestamp = time.Now()
 	select {
 	case s.events <- event:
 	default:
-		log.Printf("[Settler] WARNING: event channel full, dropping event type=%d", event.Type)
+		log.Printf("[Settler] WARNING: event channel full, blocking until space available (type=%d)", event.Type)
+		s.events <- event // blocking send
 	}
 }
 

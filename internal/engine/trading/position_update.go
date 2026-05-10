@@ -72,15 +72,15 @@ func (e *Engine) handleOpen(userID int64, side int, qty, price decimal.Decimal, 
 
 	if !e.memAccounts.Deduct(userID, totalCost) {
 		log.Printf("[UpdatePosition] user %d insufficient balance for open, need=%s", userID, totalCost)
-		return nil
+		return &PositionUpdateResult{Action: "failed"}
 	}
 
 	liqPrice := e.clearance.CalcLiqPrice(price, leverage, side)
 	ftpPrice := e.clearance.CalcForceTpPrice(price, leverage, side)
 
-	e.nextPosID++
+	posID := e.nextPosID.Add(1)
 	e.positionCache.Add(&cache.CachedPosition{
-		ID: e.nextPosID, UserID: userID, Side: side,
+		ID: posID, UserID: userID, Side: side,
 		MarginMode: model.MarginModeIsolated, Leverage: leverage,
 		EntryPrice: price.String(), Quantity: qty.String(),
 		Margin: margin.String(), LiqPrice: liqPrice.String(),
@@ -114,7 +114,7 @@ func (e *Engine) handleOpen(userID int64, side int, qty, price decimal.Decimal, 
 		userID, sideStr(side), qty, price.StringFixed(2), margin.StringFixed(2))
 
 	return &PositionUpdateResult{
-		Action: "open", PositionID: e.nextPosID, Side: side,
+		Action: "open", PositionID: posID, Side: side,
 		EntryPrice: price, Quantity: qty, Margin: margin, Fee: fee,
 		LiqPrice: liqPrice, ForceTpPrice: ftpPrice,
 	}
@@ -133,7 +133,7 @@ func (e *Engine) handleIncrease(userID int64, existing *cache.CachedPosition, qt
 
 	if !e.memAccounts.Deduct(userID, addMargin) {
 		log.Printf("[UpdatePosition] user %d insufficient balance for increase, need=%s", userID, addMargin)
-		return nil
+		return &PositionUpdateResult{Action: "failed"}
 	}
 
 	newLiqPrice := e.clearance.CalcLiqPrice(newEntry, existing.Leverage, existing.Side)

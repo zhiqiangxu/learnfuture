@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log"
 	"sync"
+	"sync/atomic"
 
 	"github.com/shopspring/decimal"
 
@@ -52,7 +53,7 @@ type Engine struct {
 	maxPositions      int
 	maxPriceDeviation decimal.Decimal
 	memAccounts       *cache.AccountCache
-	nextPosID         int64
+	nextPosID         atomic.Int64
 }
 
 type EngineConfig struct {
@@ -112,7 +113,7 @@ func NewEngine(
 	if book == nil {
 		book = orderbook.NewBook()
 	}
-	return &Engine{
+	eng := &Engine{
 		db: db, priceCache: priceCache, positionCache: positionCache,
 		orderCache: orderCache, book: book, clearance: clearance,
 		settler: settler,
@@ -120,11 +121,16 @@ func NewEngine(
 		positionModel: positionModel, tradeModel: tradeModel,
 		maxLeverage: cfg.MaxLeverage, minMargin: cfg.MinMargin,
 		maxPositions: maxPos, maxPriceDeviation: maxDev,
-		memAccounts: cache.NewAccountCache(), nextPosID: 100000,
+		memAccounts: cache.NewAccountCache(),
 	}
+	eng.nextPosID.Store(100000)
+	return eng
 }
 
 func (e *Engine) GetMemAccounts() *cache.AccountCache  { return e.memAccounts }
+// WithLock executes fn while holding the engine mutex. Use for operations
+// that need to be atomic with position/account state (e.g., funding settlement).
+func (e *Engine) WithLock(fn func())                    { e.mu.Lock(); defer e.mu.Unlock(); fn() }
 func (e *Engine) GetBook() *orderbook.Book              { return e.book }
 func (e *Engine) GetClearance() *clearing.Clearance      { return e.clearance }
 func (e *Engine) GetFeeRate() decimal.Decimal            { return e.clearance.GetMaintRate() }

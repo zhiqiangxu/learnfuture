@@ -100,14 +100,22 @@ func (b *Bot) tick() {
 		return
 	}
 
+	// Collect trades under lock, call onTrades callback after releasing lock to avoid deadlock
+	type tradeResult struct {
+		trades []*orderbook.Trade
+		side   int
+	}
+	var pendingTrades []tradeResult
+
 	b.mu.Lock()
-	defer b.mu.Unlock()
+	// Note: mu.Unlock() is called explicitly before onTrades callbacks (not deferred)
 
 	// Check if price moved enough to warrant re-quoting
 	if !b.lastQuotePrice.IsZero() {
 		moveRatio := refPrice.Sub(b.lastQuotePrice).Abs().Div(b.lastQuotePrice)
 		threshold := decimal.NewFromFloat(float64(b.cfg.MoveThreshBps) / 10000)
 		if moveRatio.LessThan(threshold) {
+			b.mu.Unlock()
 			return // price hasn't moved enough, keep current quotes
 		}
 	}
@@ -138,8 +146,8 @@ func (b *Bot) tick() {
 			Price:    bidPrice,
 			Quantity: qty.Round(8),
 		})
-		if len(bidTrades) > 0 && b.onTrades != nil {
-			b.onTrades(bidTrades, SystemUserID, 1)
+		if len(bidTrades) > 0 {
+			pendingTrades = append(pendingTrades, tradeResult{bidTrades, 1})
 		}
 		b.activeOrders = append(b.activeOrders, bidID)
 
@@ -153,8 +161,8 @@ func (b *Bot) tick() {
 			Price:    askPrice,
 			Quantity: qty.Round(8),
 		})
-		if len(askTrades) > 0 && b.onTrades != nil {
-			b.onTrades(askTrades, SystemUserID, -1)
+		if len(askTrades) > 0 {
+			pendingTrades = append(pendingTrades, tradeResult{askTrades, -1})
 		}
 		b.activeOrders = append(b.activeOrders, askID)
 	}
@@ -163,6 +171,14 @@ func (b *Bot) tick() {
 	log.Printf("[MarketMaker] quoted %d levels, ref=%s, spread=%.2fbps, orders=%d",
 		b.cfg.Levels, refPrice.StringFixed(2),
 		float64(b.cfg.SpreadBps)*2, len(b.activeOrders))
+	b.mu.Unlock()
+
+	// Process trades AFTER releasing bot.mu to avoid lock nesting (bot.mu → engine.mu)
+	if b.onTrades != nil {
+		for _, tr := range pendingTrades {
+			b.onTrades(tr.trades, SystemUserID, tr.side)
+		}
+	}
 }
 
 // GetStats returns current market maker stats.
