@@ -1,6 +1,7 @@
 package orderbook
 
 import (
+	"fmt"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -96,12 +97,15 @@ func (b *Book) PlaceLimit(order *Order) (trades []*Trade, remaining *Order) {
 
 // PlaceMarket places a market order. It matches against the opposite side
 // until filled or no more liquidity. Never rests in the book.
-func (b *Book) PlaceMarket(order *Order) (trades []*Trade) {
+func (b *Book) PlaceMarket(order *Order) (trades []*Trade, err error) {
+	if order.Price.IsPositive() {
+		return nil, fmt.Errorf("PlaceMarket called with non-zero Price=%s, use PlaceLimit instead", order.Price)
+	}
+
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
 	order.IsMaker = false
-	order.Price = decimal.Zero // market order has no price limit
 	order.Timestamp = time.Now()
 
 	if order.Side == 1 {
@@ -110,7 +114,7 @@ func (b *Book) PlaceMarket(order *Order) (trades []*Trade) {
 		trades = b.matchAgainst(&b.bids, order, false)
 	}
 
-	return trades
+	return trades, nil
 }
 
 // Cancel removes an order from the book. Returns the cancelled order or nil.

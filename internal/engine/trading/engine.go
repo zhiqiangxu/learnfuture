@@ -167,7 +167,7 @@ func (e *Engine) PlaceMarketOrder(userID int64, side, leverage, marginMode int, 
 
 	// --- MATCHING ---
 	estimatedQty := position.CalcQuantity(margin, leverage, refPrice)
-	obTrades := e.book.PlaceMarket(&orderbook.Order{
+	obTrades, _ := e.book.PlaceMarket(&orderbook.Order{
 		ID: e.book.NextOrderID(), UserID: userID, Side: side, Quantity: estimatedQty,
 	})
 	if len(obTrades) == 0 {
@@ -328,7 +328,7 @@ func (e *Engine) ClosePosition(positionID, userID int64, closeReason int, closeQ
 	actualQty := pos.Quantity
 	if !closeQty.IsZero() { actualQty = closeQty }
 
-	obTrades := e.book.PlaceMarket(&orderbook.Order{
+	obTrades, _ := e.book.PlaceMarket(&orderbook.Order{
 		ID: e.book.NextOrderID(), UserID: userID, Side: -pos.Side, Quantity: actualQty,
 	})
 	if len(obTrades) == 0 {
@@ -367,7 +367,7 @@ func (e *Engine) ClosePositionInternal(positionID int64, closePrice decimal.Deci
 	}
 	pos := cachedToModel(cp)
 
-	obTrades := e.book.PlaceMarket(&orderbook.Order{
+	obTrades, _ := e.book.PlaceMarket(&orderbook.Order{
 		ID: e.book.NextOrderID(), UserID: pos.UserID, Side: -pos.Side, Quantity: pos.Quantity,
 	})
 	if len(obTrades) == 0 {

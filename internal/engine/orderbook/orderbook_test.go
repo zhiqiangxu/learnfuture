@@ -43,7 +43,7 @@ func TestBook_MarketOrder_MatchesBestPrice(t *testing.T) {
 	book.PlaceLimit(&Order{ID: 2, UserID: 11, Side: -1, Price: d("60200"), Quantity: d("0.5")})
 
 	// Market buy 0.3 BTC → should match at best ask 60100
-	trades := book.PlaceMarket(&Order{ID: 3, UserID: 1, Side: 1, Quantity: d("0.3")})
+	trades, _ := book.PlaceMarket(&Order{ID: 3, UserID: 1, Side: 1, Quantity: d("0.3")})
 
 	if len(trades) != 1 {
 		t.Fatalf("expected 1 trade, got %d", len(trades))
@@ -64,7 +64,7 @@ func TestBook_MarketOrder_EatsMultipleLevels(t *testing.T) {
 	book.PlaceLimit(&Order{ID: 2, UserID: 11, Side: -1, Price: d("60200"), Quantity: d("0.3")})
 
 	// Market buy 0.4 → eats 0.2@60100 + 0.2@60200
-	trades := book.PlaceMarket(&Order{ID: 3, UserID: 1, Side: 1, Quantity: d("0.4")})
+	trades, _ := book.PlaceMarket(&Order{ID: 3, UserID: 1, Side: 1, Quantity: d("0.4")})
 
 	if len(trades) != 2 {
 		t.Fatalf("expected 2 trades (2 price levels), got %d", len(trades))
@@ -121,7 +121,7 @@ func TestBook_PricePriority(t *testing.T) {
 	}
 
 	// Sell market → matches best bid (60000) first
-	trades := book.PlaceMarket(&Order{ID: 3, UserID: 1, Side: -1, Quantity: d("0.5")})
+	trades, _ := book.PlaceMarket(&Order{ID: 3, UserID: 1, Side: -1, Quantity: d("0.5")})
 	if !trades[0].Price.Equal(d("60000")) {
 		t.Errorf("should match best bid 60000 first, got %s", trades[0].Price)
 	}
@@ -135,7 +135,7 @@ func TestBook_TimePriority(t *testing.T) {
 	book.PlaceLimit(&Order{ID: 2, UserID: 11, Side: 1, Price: d("60000"), Quantity: d("1")})
 
 	// Sell → should match order 1 first (earlier)
-	trades := book.PlaceMarket(&Order{ID: 3, UserID: 1, Side: -1, Quantity: d("0.5")})
+	trades, _ := book.PlaceMarket(&Order{ID: 3, UserID: 1, Side: -1, Quantity: d("0.5")})
 	if trades[0].BuyOrderID != 1 {
 		t.Errorf("should match order 1 first (time priority), matched %d", trades[0].BuyOrderID)
 	}
@@ -205,7 +205,7 @@ func TestBook_NoLiquidity_MarketOrder(t *testing.T) {
 	book := NewBook()
 
 	// Market buy with empty ask side → no trades
-	trades := book.PlaceMarket(&Order{ID: 1, UserID: 1, Side: 1, Quantity: d("1")})
+	trades, _ := book.PlaceMarket(&Order{ID: 1, UserID: 1, Side: 1, Quantity: d("1")})
 	if len(trades) != 0 {
 		t.Error("no trades expected with empty book")
 	}
