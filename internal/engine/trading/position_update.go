@@ -222,11 +222,15 @@ func (e *Engine) handleReduce(userID int64, existing *cache.CachedPosition, trad
 	}
 	posID := existing.ID
 	closeTrade.PositionID = &posID
+
 	e.settler.Submit(&clearing.SettleEvent{
 		Type: clearing.EventClosePosition, Trade: closeTrade,
 		PositionID: existing.ID, UserID: userID, CloseReason: closeReason,
 		ClosePrice: price, Margin: closeMargin, RealizedPnl: realizedPnl,
 		Fee: closeFee, NetPnl: netPnl,
+		IsPartialClose: !closeQty.Equal(existingQty),
+		RemainingQty: existingQty.Sub(closeQty),
+		RemainingMargin: existingMargin.Sub(closeMargin),
 	})
 
 	// If qty exceeds existing position, open remainder in new direction

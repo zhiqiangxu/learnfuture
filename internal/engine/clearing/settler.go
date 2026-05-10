@@ -34,14 +34,17 @@ type SettleEvent struct {
 	Trade    *model.Trade
 
 	// For EventClosePosition
-	PositionID  int64
-	UserID      int64
-	CloseReason int
-	ClosePrice  decimal.Decimal
-	Margin      decimal.Decimal // position margin (returned or lost)
-	RealizedPnl decimal.Decimal
-	Fee         decimal.Decimal // trading fee
-	NetPnl      decimal.Decimal
+	PositionID      int64
+	UserID          int64
+	CloseReason     int
+	ClosePrice      decimal.Decimal
+	Margin          decimal.Decimal // position margin (returned or lost)
+	RealizedPnl     decimal.Decimal
+	Fee             decimal.Decimal // trading fee
+	NetPnl          decimal.Decimal
+	IsPartialClose  bool            // true = don't close position, just reduce
+	RemainingQty    decimal.Decimal // remaining quantity after partial close
+	RemainingMargin decimal.Decimal // remaining margin after partial close
 
 	// For EventCancelOrder
 	OrderID int64
@@ -206,15 +209,23 @@ func (s *Settler) execTx(fn func(tx *sql.Tx) error) error {
 
 func (s *Settler) settleClose(evt *SettleEvent) {
 	if err := s.execTx(func(tx *sql.Tx) error {
-		closeStatus := model.PositionStatusClosed
-		switch evt.CloseReason {
-		case model.CloseReasonLiquidation:
-			closeStatus = model.PositionStatusLiquidated
-		case model.CloseReasonForceTp:
-			closeStatus = model.PositionStatusForceTp
-		}
-		if err := s.positionModel.CloseTx(tx, evt.PositionID, closeStatus); err != nil {
-			return fmt.Errorf("close position: %w", err)
+		if evt.IsPartialClose {
+			// Partial close: update quantity and margin, don't change status
+			if err := s.positionModel.UpdateQuantityAndMarginTx(tx, evt.PositionID, evt.RemainingQty, evt.RemainingMargin); err != nil {
+				return fmt.Errorf("update position partial close: %w", err)
+			}
+		} else {
+			// Full close: update status
+			closeStatus := model.PositionStatusClosed
+			switch evt.CloseReason {
+			case model.CloseReasonLiquidation:
+				closeStatus = model.PositionStatusLiquidated
+			case model.CloseReasonForceTp:
+				closeStatus = model.PositionStatusForceTp
+			}
+			if err := s.positionModel.CloseTx(tx, evt.PositionID, closeStatus); err != nil {
+				return fmt.Errorf("close position: %w", err)
+			}
 		}
 		if evt.Order != nil {
 			if err := s.orderModel.CreateTx(tx, evt.Order); err != nil {

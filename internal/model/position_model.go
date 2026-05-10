@@ -137,6 +137,14 @@ func (m *PositionModel) UpdateFundingPnlTx(db Executor, id int64, fundingPayment
 	return err
 }
 
+func (m *PositionModel) UpdateQuantityAndMarginTx(db Executor, id int64, qty, margin decimal.Decimal) error {
+	_, err := db.Exec(
+		`UPDATE positions SET quantity = $1, margin = $2, updated_at = NOW() WHERE id = $3`,
+		qty, margin, id,
+	)
+	return err
+}
+
 func (m *PositionModel) UpdateMargin(id int64, newMargin, newLiqPrice decimal.Decimal) error {
 	_, err := m.db.Exec(
 		`UPDATE positions SET margin = $1, liq_price = $2, updated_at = NOW() WHERE id = $3`,
