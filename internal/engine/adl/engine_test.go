@@ -174,6 +174,74 @@ func TestExecuteADL_NeverCreatesLoss(t *testing.T) {
 	}
 }
 
+func TestExecuteADL_MultiplePositions(t *testing.T) {
+	// Two short counterparties, deficit needs both to cover
+	ranked := []*RankedPosition{
+		{
+			Position: &cache.CachedPosition{
+				ID: 1, UserID: 1, Side: -1, Leverage: 10,
+				EntryPrice: "60000", Quantity: "0.01", Margin: "60",
+			},
+		},
+		{
+			Position: &cache.CachedPosition{
+				ID: 2, UserID: 2, Side: -1, Leverage: 10,
+				EntryPrice: "60000", Quantity: "0.01", Margin: "60",
+			},
+		},
+	}
+
+	// Short @ 60000, market=53000, bankruptcy=58000
+	// settlement capped at 58000 (< entry 60000, so OK for short)
+	// marketPnlPerUnit = (53000-60000)*(-1) = 7000
+	// settlePnlPerUnit = (58000-60000)*(-1) = 2000
+	// profitGivenUp = 7000-2000 = 5000 per unit
+	// deficit=80, neededQty = 80/5000 = 0.016
+	// Position 1 has 0.01, covers 0.01*5000=50, remaining=30
+	// Position 2 has 0.01, covers 30/5000=0.006
+	results, remaining := ExecuteADL(ranked, d("80"), d("58000"), d("53000"))
+
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results (deficit needs both positions), got %d", len(results))
+	}
+	if remaining.GreaterThan(d("0.01")) {
+		t.Errorf("deficit should be covered, remaining=%s", remaining)
+	}
+	// First position fully closed
+	if !results[0].FullyClosed {
+		t.Error("first position should be fully closed")
+	}
+	// Second position partially closed
+	if results[1].FullyClosed {
+		t.Error("second position should be partially closed")
+	}
+}
+
+func TestExecuteADL_DeficitNotFullyCovered(t *testing.T) {
+	// Only one small position, can't cover full deficit
+	ranked := []*RankedPosition{
+		{
+			Position: &cache.CachedPosition{
+				ID: 1, UserID: 1, Side: -1, Leverage: 10,
+				EntryPrice: "60000", Quantity: "0.001", Margin: "6",
+			},
+		},
+	}
+
+	// deficit=1000, but position can only cover 0.001 * 5000 = 5
+	results, remaining := ExecuteADL(ranked, d("1000"), d("58000"), d("53000"))
+
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if !remaining.IsPositive() {
+		t.Error("remaining deficit should be positive (not fully covered)")
+	}
+	if !results[0].FullyClosed {
+		t.Error("position should be fully closed (exhausted)")
+	}
+}
+
 func TestGetADLIndicator(t *testing.T) {
 	tests := []struct {
 		pnlRatio string

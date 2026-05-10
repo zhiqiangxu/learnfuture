@@ -308,12 +308,12 @@ func (m *Monitor) triggerADL(liquidatedSide int, deficit, bankruptcyPrice, curre
 			"reduced_qty":    r.ReducedQty.String(),
 			"price":          r.SettlementPrice.String(),
 			"market_price":   currentPrice.String(),
-			"realized_pnl":   result.RealizedPnl.String(),
+			"realized_pnl":   result.NetPnl.String(),
 		})
 		m.hub.SendToUser(r.UserID, msg)
 
-		log.Printf("[Monitor] ADL: reduced position %d by %s BTC at settlement price %s (bankruptcy %s, market %s), pnl=%s",
-			r.PositionID, r.ReducedQty, r.SettlementPrice, bankruptcyPrice, currentPrice, result.RealizedPnl.StringFixed(2))
+		log.Printf("[Monitor] ADL: reduced position %d by %s BTC at settlement price %s (bankruptcy %s, market %s), netPnl=%s",
+			r.PositionID, r.ReducedQty, r.SettlementPrice, bankruptcyPrice, currentPrice, result.NetPnl.StringFixed(2))
 	}
 
 	if remaining.IsPositive() {
