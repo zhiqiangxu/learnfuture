@@ -204,10 +204,19 @@ func (m *Monitor) OnPriceUpdate(lastPrice decimal.Decimal) {
 
 // handleLiquidation processes a liquidation with insurance fund integration.
 func (m *Monitor) handleLiquidation(pos *cache.CachedPosition, lastPrice, entryPrice, quantity, margin decimal.Decimal) {
-	result, err := m.engine.ClosePositionInternal(pos.ID, lastPrice, model.CloseReasonLiquidation)
-	if err != nil {
-		log.Printf("[Monitor] liquidate position %d error: %v", pos.ID, err)
+	// Liquidation settles directly via UpdatePosition — does NOT go through orderbook.
+	// This guarantees liquidation always succeeds regardless of orderbook liquidity.
+	// The reverse side (market maker) also gets position updated via the same call.
+	closeSide := -pos.Side // sell to close long, buy to close short
+	updateResult := m.engine.UpdatePosition(pos.UserID, closeSide, quantity, lastPrice, pos.Leverage, false, model.CloseReasonLiquidation)
+	if updateResult == nil {
+		log.Printf("[Monitor] liquidate position %d error: UpdatePosition returned nil", pos.ID)
 		return
+	}
+	result := &CloseResult{
+		RawPnl: updateResult.RawPnl, RealizedPnl: updateResult.RealizedPnl,
+		Fee: updateResult.Fee, FundingPnl: updateResult.FundingPnl,
+		NetPnl: updateResult.NetPnl, ClosedQty: updateResult.ClosedQty,
 	}
 
 	// Process through insurance fund
