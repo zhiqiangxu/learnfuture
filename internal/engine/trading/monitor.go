@@ -50,7 +50,7 @@ func NewMonitor(
 		hub:             hub,
 		markPriceEngine: markPriceEngine,
 		insuranceFund:   insuranceFund,
-		liqEngine:       NewLiquidationEngine(engine, positionCache, engine.GetBook()),
+		liqEngine:       NewLiquidationEngine(engine, positionCache, engine.GetBook(), insuranceFund),
 	}
 }
 
@@ -214,28 +214,18 @@ func (m *Monitor) handleLiquidation(pos *cache.CachedPosition, lastPrice, entryP
 	bankruptcyPrice := position.CalcBankruptcyPrice(entryPrice, pos.Leverage, pos.Side)
 	m.liqEngine.TakeOver(pos, bankruptcyPrice)
 
-	// User's result: lost all margin at bankruptcy price
-	rawPnl := position.CalcUnrealizedPnL(entryPrice, bankruptcyPrice, quantity, pos.Side)
-	result := &CloseResult{
-		RawPnl: rawPnl, RealizedPnl: rawPnl, NetPnl: rawPnl,
-		ClosePrice: bankruptcyPrice, ClosedQty: quantity,
-	}
-
-	// Step 2: Insurance fund handles surplus/deficit.
-	// The liquidation engine will later close its position on the market.
-	// Difference between market close price and bankruptcy price goes to insurance fund.
-	if m.insuranceFund != nil {
-		liqResult := m.insuranceFund.ProcessLiquidation(
-			entryPrice, lastPrice, quantity, pos.Side, pos.Leverage,
-		)
-
-		if liqResult.NeedADL {
-			log.Printf("[Monitor] insurance fund depleted, triggering ADL for deficit=%s bankruptcyPrice=%s", liqResult.ADLDeficit, bankruptcyPrice)
-			m.triggerADL(pos.Side, liqResult.ADLDeficit, bankruptcyPrice, lastPrice)
+	// Step 2: Urgency check — if price already past bankruptcy, insurance fund may be needed now.
+	// Actual surplus/deficit is settled later in LiquidationEngine.OnTick when position is closed on market.
+	pastBankruptcy := isPastPrice(lastPrice, bankruptcyPrice, pos.Side)
+	if pastBankruptcy && m.insuranceFund != nil {
+		deficit := bankruptcyPrice.Sub(lastPrice).Abs().Mul(quantity)
+		covered, needADL := m.insuranceFund.Cover(deficit)
+		log.Printf("[Monitor] liquidation pos=%d price past bankruptcy, deficit=%s covered=%s", pos.ID, deficit, covered)
+		if needADL {
+			uncovered := deficit.Sub(covered)
+			log.Printf("[Monitor] insurance fund depleted, triggering ADL for uncovered=%s", uncovered)
+			m.triggerADL(pos.Side, uncovered, bankruptcyPrice, lastPrice)
 		}
-
-		log.Printf("[Monitor] liquidation pos=%d surplus=%s fundBalance=%s",
-			pos.ID, liqResult.Surplus.StringFixed(4), m.insuranceFund.GetBalance().StringFixed(2))
 	}
 
 	msg, _ := ws.NewMessage("liquidated", map[string]interface{}{
@@ -246,6 +236,11 @@ func (m *Monitor) handleLiquidation(pos *cache.CachedPosition, lastPrice, entryP
 	m.hub.SendToUser(pos.UserID, msg)
 
 	if m.onPositionClose != nil {
+		rawPnl := position.CalcUnrealizedPnL(entryPrice, bankruptcyPrice, quantity, pos.Side)
+		result := &CloseResult{
+			RawPnl: rawPnl, RealizedPnl: rawPnl, NetPnl: rawPnl,
+			ClosePrice: bankruptcyPrice, ClosedQty: quantity,
+		}
 		m.onPositionClose(pos.UserID, pos.ID, result, model.CloseReasonLiquidation)
 	}
 }
@@ -331,6 +326,15 @@ func shouldLiquidate(markPrice, liqPrice decimal.Decimal, side int) bool {
 		return markPrice.LessThanOrEqual(liqPrice)
 	}
 	return markPrice.GreaterThanOrEqual(liqPrice)
+}
+
+// isPastPrice checks if price has moved past a threshold in the loss direction.
+// Long: price dropped below threshold. Short: price rose above threshold.
+func isPastPrice(price, threshold decimal.Decimal, side int) bool {
+	if side == 1 {
+		return price.LessThan(threshold)
+	}
+	return price.GreaterThan(threshold)
 }
 
 // shouldTrigger checks if price triggers a TP/SL/ForceTP.

@@ -8,6 +8,7 @@ import (
 	"github.com/shopspring/decimal"
 
 	"learn_future/internal/cache"
+	"learn_future/internal/engine/insurance"
 	"learn_future/internal/engine/orderbook"
 )
 
@@ -33,14 +34,16 @@ type LiquidationEngine struct {
 	disposalInterval time.Duration // how often to attempt disposal
 	disposalFraction decimal.Decimal // fraction of position to close each tick (e.g., 0.5 = 50%)
 	maxSlippage      decimal.Decimal // max price deviation from mid (e.g., 0.01 = 1%)
+	insuranceFund    *insurance.Fund
 	lastDisposal     time.Time
 }
 
-func NewLiquidationEngine(engine *Engine, positionCache *cache.PositionCache, book *orderbook.Book) *LiquidationEngine {
+func NewLiquidationEngine(engine *Engine, positionCache *cache.PositionCache, book *orderbook.Book, fund *insurance.Fund) *LiquidationEngine {
 	return &LiquidationEngine{
 		engine:           engine,
 		positionCache:    positionCache,
 		book:             book,
+		insuranceFund:    fund,
 		disposalInterval: 1 * time.Second,
 		disposalFraction: decimal.NewFromFloat(0.5),
 		maxSlippage:      decimal.NewFromFloat(0.01),
@@ -139,7 +142,22 @@ func (le *LiquidationEngine) OnTick(midPrice decimal.Decimal) {
 
 		if len(trades) > 0 {
 			le.engine.ProcessTrades(trades, LiquidationUserID, closeSide, 1)
-			log.Printf("[LiquidationEngine] disposed %d trades, position side=%d", len(trades), pos.Side)
+
+			// Insurance fund: surplus/deficit = (disposal price - entry price) × qty × side
+			// Entry price = bankruptcy price (the price at which the engine took over)
+			entryPrice, _ := decimal.NewFromString(pos.EntryPrice)
+			for _, t := range trades {
+				pnl := t.Price.Sub(entryPrice).Mul(t.Quantity).Mul(decimal.NewFromInt(int64(pos.Side)))
+				if le.insuranceFund != nil {
+					if pnl.IsPositive() {
+						le.insuranceFund.Contribute(pnl) // surplus → fund grows
+					} else {
+						le.insuranceFund.Cover(pnl.Abs()) // deficit → fund pays
+					}
+				}
+				log.Printf("[LiquidationEngine] disposed qty=%s at %s, entry=%s, pnl=%s",
+					t.Quantity, t.Price.StringFixed(2), entryPrice.StringFixed(2), pnl.StringFixed(2))
+			}
 		}
 	}
 }

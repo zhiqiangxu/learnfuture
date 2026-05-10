@@ -43,7 +43,7 @@ func TestLiquidationEngine_TakeOver_MaintainsInvariant(t *testing.T) {
 	bankruptcyPrice := position.CalcBankruptcyPrice(entryPrice, userPos.Leverage, userPos.Side)
 
 	// TakeOver: transfer position to liquidation engine
-	le := NewLiquidationEngine(e, posc, e.GetBook())
+	le := NewLiquidationEngine(e, posc, e.GetBook(), nil)
 	le.TakeOver(userPos, bankruptcyPrice)
 
 	// Verify: user has no position
@@ -95,7 +95,7 @@ func TestLiquidationEngine_TakeOver_UserLosesAllMargin(t *testing.T) {
 	entryPrice, _ := decimal.NewFromString(userPos.EntryPrice)
 	bankruptcyPrice := position.CalcBankruptcyPrice(entryPrice, userPos.Leverage, userPos.Side)
 
-	le := NewLiquidationEngine(e, posc, e.GetBook())
+	le := NewLiquidationEngine(e, posc, e.GetBook(), nil)
 	le.TakeOver(userPos, bankruptcyPrice)
 
 	balanceAfterLiq := e.GetMemAccounts().GetBalance(10)
@@ -131,7 +131,7 @@ func TestLiquidationEngine_OnTick_DisposesPosition(t *testing.T) {
 	entryPrice, _ := decimal.NewFromString(userPos.EntryPrice)
 	bankruptcyPrice := position.CalcBankruptcyPrice(entryPrice, userPos.Leverage, userPos.Side)
 
-	le := NewLiquidationEngine(e, posc, e.GetBook())
+	le := NewLiquidationEngine(e, posc, e.GetBook(), nil)
 	le.TakeOver(userPos, bankruptcyPrice)
 
 	// Verify liquidation engine has position
