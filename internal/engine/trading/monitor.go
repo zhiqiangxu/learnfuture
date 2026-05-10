@@ -281,7 +281,7 @@ func (m *Monitor) triggerADL(liquidatedSide int, deficit, bankruptcyPrice, curre
 	targetSide := -liquidatedSide
 
 	allPositions := m.positionCache.GetAll()
-	ranked := adl.RankPositions(allPositions, targetSide, currentPrice)
+	ranked := adl.RankPositions(allPositions, targetSide, currentPrice, bankruptcyPrice)
 
 	if len(ranked) == 0 {
 		// This should not happen if ∑longs ≡ ∑shorts is maintained.
@@ -291,12 +291,12 @@ func (m *Monitor) triggerADL(liquidatedSide int, deficit, bankruptcyPrice, curre
 	}
 
 	// Use bankruptcy price for settlement (not market price) — ensures zero-sum
-	results, remaining := adl.ExecuteADL(ranked, deficit, bankruptcyPrice)
+	results, remaining := adl.ExecuteADL(ranked, deficit, bankruptcyPrice, currentPrice)
 	for _, r := range results {
 		// Directly reduce counterparty's position via updatePosition — NO order book
 		// The counterparty's trade side is opposite to their position (selling to close a long, etc.)
 		closeSide := -targetSide // if target is short, close side is buy (1)
-		result := m.engine.UpdatePosition(r.UserID, closeSide, r.ReducedQty, bankruptcyPrice, 1, false, model.CloseReasonADL)
+		result := m.engine.UpdatePosition(r.UserID, closeSide, r.ReducedQty, r.SettlementPrice, 1, false, model.CloseReasonADL)
 		if result == nil {
 			log.Printf("[Monitor] ADL: failed to update position for user %d", r.UserID)
 			continue
@@ -306,20 +306,33 @@ func (m *Monitor) triggerADL(liquidatedSide int, deficit, bankruptcyPrice, curre
 		msg, _ := ws.NewMessage("adl", map[string]interface{}{
 			"position_id":    r.PositionID,
 			"reduced_qty":    r.ReducedQty.String(),
-			"price":          bankruptcyPrice.String(),
+			"price":          r.SettlementPrice.String(),
 			"market_price":   currentPrice.String(),
 			"realized_pnl":   result.RealizedPnl.String(),
 		})
 		m.hub.SendToUser(r.UserID, msg)
 
-		log.Printf("[Monitor] ADL: reduced position %d by %s BTC at bankruptcy price %s (market %s), pnl=%s",
-			r.PositionID, r.ReducedQty, bankruptcyPrice, currentPrice, result.RealizedPnl.StringFixed(2))
+		log.Printf("[Monitor] ADL: reduced position %d by %s BTC at settlement price %s (bankruptcy %s, market %s), pnl=%s",
+			r.PositionID, r.ReducedQty, r.SettlementPrice, bankruptcyPrice, currentPrice, result.RealizedPnl.StringFixed(2))
 	}
 
 	if remaining.IsPositive() {
-		// All opposing positions exhausted but deficit still uncovered.
-		// This is "socialized loss" — the last resort in a real exchange.
 		log.Printf("[Monitor] CRITICAL: ADL exhausted all opposing positions, %s deficit uncovered (socialized loss)", remaining)
+	}
+
+	// Invariant check: ∑longs ≡ ∑shorts must still hold after ADL
+	sumLong := decimal.Zero
+	sumShort := decimal.Zero
+	for _, p := range m.positionCache.GetAll() {
+		qty, _ := decimal.NewFromString(p.Quantity)
+		if p.Side == 1 {
+			sumLong = sumLong.Add(qty)
+		} else {
+			sumShort = sumShort.Add(qty)
+		}
+	}
+	if !sumLong.Equal(sumShort) {
+		log.Printf("[Monitor] CRITICAL: ADL broke invariant! longs=%s shorts=%s", sumLong, sumShort)
 	}
 }
 

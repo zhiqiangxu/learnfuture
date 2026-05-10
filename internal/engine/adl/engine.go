@@ -33,14 +33,17 @@ type RankedPosition struct {
 }
 
 // RankPositions ranks opposing positions by ADL priority.
-// Side: the side being reduced (opposite to the liquidated side).
-// currentPrice: the current market price.
-// Returns positions sorted by ADL priority (highest first = first to be reduced).
-func RankPositions(positions []*cache.CachedPosition, targetSide int, currentPrice decimal.Decimal) []*RankedPosition {
+// Only includes positions that are profitable at BOTH market price and bankruptcy price,
+// ensuring ADL never forces a counterparty into loss.
+func RankPositions(positions []*cache.CachedPosition, targetSide int, currentPrice, bankruptcyPrice decimal.Decimal) []*RankedPosition {
 	var ranked []*RankedPosition
 
 	for _, pos := range positions {
 		if pos.Side != targetSide {
+			continue
+		}
+		// Skip non-active positions
+		if pos.State.Load() != cache.PosStateActive {
 			continue
 		}
 
@@ -48,21 +51,27 @@ func RankPositions(positions []*cache.CachedPosition, targetSide int, currentPri
 		quantity, _ := decimal.NewFromString(pos.Quantity)
 		margin, _ := decimal.NewFromString(pos.Margin)
 
+		// Must be profitable at market price
 		upnl := position.CalcUnrealizedPnL(entryPrice, currentPrice, quantity, pos.Side)
-		pnlRatio := position.CalcROI(upnl, margin)
+		if !upnl.IsPositive() {
+			continue
+		}
 
-		// ADL score = PnL ratio * leverage factor
-		// Higher leverage + higher profit = higher priority
+		// Must also be profitable at bankruptcy price (settlement won't cause loss)
+		upnlAtBankruptcy := position.CalcUnrealizedPnL(entryPrice, bankruptcyPrice, quantity, pos.Side)
+		if !upnlAtBankruptcy.IsPositive() {
+			continue
+		}
+
+		pnlRatio := position.CalcROI(upnl, margin)
 		leverageFactor := decimal.NewFromInt(int64(pos.Leverage))
 		score := pnlRatio.Mul(leverageFactor)
 
-		if upnl.IsPositive() { // Only profitable positions can be ADL'd
-			ranked = append(ranked, &RankedPosition{
-				Position: pos,
-				PnlRatio: pnlRatio,
-				Score:    score,
-			})
-		}
+		ranked = append(ranked, &RankedPosition{
+			Position: pos,
+			PnlRatio: pnlRatio,
+			Score:    score,
+		})
 	}
 
 	// Sort by score descending (most profitable first)
@@ -73,35 +82,22 @@ func RankPositions(positions []*cache.CachedPosition, targetSide int, currentPri
 	return ranked
 }
 
-// CalcADLQuantity determines how much quantity needs to be reduced from
-// the target position to cover the given deficit.
-// deficit: the uncovered loss from the insurance fund
-// currentPrice: current market price
-// Returns the quantity to reduce.
-func CalcADLQuantity(deficit, currentPrice decimal.Decimal) decimal.Decimal {
-	if currentPrice.IsZero() {
-		return decimal.Zero
-	}
-	// quantity = deficit / currentPrice
-	return deficit.Div(currentPrice)
-}
-
 // ADLResult describes the outcome of an ADL operation on a single position.
 type ADLResult struct {
-	PositionID     int64
-	UserID         int64
-	ReducedQty     decimal.Decimal
-	ReducedMargin  decimal.Decimal
-	RealizedPnl    decimal.Decimal
+	PositionID      int64
+	UserID          int64
+	ReducedQty      decimal.Decimal
+	ReducedMargin   decimal.Decimal
+	RealizedPnl     decimal.Decimal
+	SettlementPrice decimal.Decimal // capped price used for settlement
 	RemainingQty   decimal.Decimal
 	FullyClosed    bool
 }
 
 // ExecuteADL reduces opposing positions to cover the deficit from a liquidation.
-// Uses the bankruptcyPrice (not market price) for settlement, ensuring zero-sum:
-// the counterparty's "lost" profit exactly covers the bankrupt position's deficit.
-// bankruptcyPrice: the price at which the liquidated position's margin goes to zero.
-func ExecuteADL(ranked []*RankedPosition, deficit, bankruptcyPrice decimal.Decimal) (results []*ADLResult, remainingDeficit decimal.Decimal) {
+// Settlement price is capped so counterparties only lose PROFITS, never incur losses.
+// currentPrice is needed to calculate profit given up (market price vs settlement price).
+func ExecuteADL(ranked []*RankedPosition, deficit, bankruptcyPrice, currentPrice decimal.Decimal) (results []*ADLResult, remainingDeficit decimal.Decimal) {
 	remainingDeficit = deficit
 
 	for _, rp := range ranked {
@@ -114,14 +110,30 @@ func ExecuteADL(ranked []*RankedPosition, deficit, bankruptcyPrice decimal.Decim
 		quantity, _ := decimal.NewFromString(pos.Quantity)
 		margin, _ := decimal.NewFromString(pos.Margin)
 
-		// How much quantity to reduce: deficit / |bankruptcyPrice - entryPrice|
-		// This is how much the counterparty needs to "give back"
-		priceDiff := bankruptcyPrice.Sub(entryPrice).Abs()
-		if priceDiff.IsZero() {
+		// Cap settlement price: never worse than counterparty's entry price.
+		//   Long counterparty: settlement price must be >= entry
+		//   Short counterparty: settlement price must be <= entry
+		settlementPrice := bankruptcyPrice
+		if pos.Side == 1 && bankruptcyPrice.LessThan(entryPrice) {
+			settlementPrice = entryPrice
+		} else if pos.Side == -1 && bankruptcyPrice.GreaterThan(entryPrice) {
+			settlementPrice = entryPrice
+		}
+
+		// Profit per unit the counterparty gives up = (market PnL - settlement PnL) per unit
+		marketPnlPerUnit := currentPrice.Sub(entryPrice).Mul(decimal.NewFromInt(int64(pos.Side)))
+		settlePnlPerUnit := settlementPrice.Sub(entryPrice).Mul(decimal.NewFromInt(int64(pos.Side)))
+		profitGivenUpPerUnit := marketPnlPerUnit.Sub(settlePnlPerUnit)
+
+		if !profitGivenUpPerUnit.IsPositive() {
+			// Settlement is same or better than market — no profit to take
 			continue
 		}
-		neededQty := remainingDeficit.Div(priceDiff)
 
+		// How much quantity to reduce to cover the deficit
+		neededQty := remainingDeficit.Div(profitGivenUpPerUnit)
+
+		// Clamp reducedQty: don't reduce more than needed or more than position size
 		reducedQty := neededQty
 		fullyClosed := false
 		if neededQty.GreaterThanOrEqual(quantity) {
@@ -129,27 +141,29 @@ func ExecuteADL(ranked []*RankedPosition, deficit, bankruptcyPrice decimal.Decim
 			fullyClosed = true
 		}
 
+		// Ensure coveredAmount doesn't exceed deficit (adjust reducedQty if needed)
+		coveredAmount := reducedQty.Mul(profitGivenUpPerUnit)
+		if coveredAmount.GreaterThan(remainingDeficit) {
+			reducedQty = remainingDeficit.Div(profitGivenUpPerUnit)
+			coveredAmount = remainingDeficit
+			fullyClosed = false
+		}
+
 		ratio := reducedQty.Div(quantity)
 		reducedMargin := margin.Mul(ratio)
+		realizedPnl := position.CalcUnrealizedPnL(entryPrice, settlementPrice, reducedQty, pos.Side)
 
-		// PnL at bankruptcy price (less than market price PnL — this is the ADL cost)
-		realizedPnl := position.CalcUnrealizedPnL(entryPrice, bankruptcyPrice, reducedQty, pos.Side)
-
-		// Deficit covered = what the counterparty "gives up" vs market price
-		coveredAmount := reducedQty.Mul(priceDiff)
-		if coveredAmount.GreaterThan(remainingDeficit) {
-			coveredAmount = remainingDeficit
-		}
 		remainingDeficit = remainingDeficit.Sub(coveredAmount)
 
 		results = append(results, &ADLResult{
-			PositionID:    pos.ID,
-			UserID:        pos.UserID,
-			ReducedQty:    reducedQty,
-			ReducedMargin: reducedMargin,
-			RealizedPnl:   realizedPnl,
-			RemainingQty:  quantity.Sub(reducedQty),
-			FullyClosed:   fullyClosed,
+			PositionID:      pos.ID,
+			UserID:          pos.UserID,
+			ReducedQty:      reducedQty,
+			ReducedMargin:   reducedMargin,
+			RealizedPnl:     realizedPnl,
+			SettlementPrice: settlementPrice,
+			RemainingQty:    quantity.Sub(reducedQty),
+			FullyClosed:     fullyClosed,
 		})
 	}
 

@@ -20,14 +20,12 @@ func TestRankPositions_SortByProfitability(t *testing.T) {
 		{ID: 3, UserID: 3, Side: -1, Leverage: 10, EntryPrice: "60000", Quantity: "0.01", Margin: "60"}, // wrong side
 	}
 
-	// currentPrice=65000, targeting long positions
-	ranked := RankPositions(positions, 1, d("65000"))
+	// currentPrice=65000, bankruptcyPrice=61000 (above both entries 55000 and 60000)
+	ranked := RankPositions(positions, 1, d("65000"), d("61000"))
 
 	if len(ranked) != 2 {
 		t.Fatalf("expected 2 ranked positions, got %d", len(ranked))
 	}
-
-	// Position 2 (entry 55000) has higher profit at 65000 than position 1 (entry 60000)
 	if ranked[0].Position.ID != 2 {
 		t.Errorf("expected position 2 (most profitable) first, got ID=%d", ranked[0].Position.ID)
 	}
@@ -35,12 +33,12 @@ func TestRankPositions_SortByProfitability(t *testing.T) {
 
 func TestRankPositions_OnlyProfitablePositions(t *testing.T) {
 	positions := []*cache.CachedPosition{
-		{ID: 1, Side: 1, Leverage: 10, EntryPrice: "60000", Quantity: "0.01", Margin: "60"},  // losing
-		{ID: 2, Side: 1, Leverage: 10, EntryPrice: "50000", Quantity: "0.01", Margin: "50"},  // winning
+		{ID: 1, Side: 1, Leverage: 10, EntryPrice: "60000", Quantity: "0.01", Margin: "60"}, // losing at market
+		{ID: 2, Side: 1, Leverage: 10, EntryPrice: "50000", Quantity: "0.01", Margin: "50"}, // winning
 	}
 
-	// At price 55000, only position 2 is profitable for long
-	ranked := RankPositions(positions, 1, d("55000"))
+	// At market=55000, bankruptcyPrice=52000 (above entry 50000, so long is still profitable at bankruptcy)
+	ranked := RankPositions(positions, 1, d("55000"), d("52000"))
 
 	if len(ranked) != 1 {
 		t.Fatalf("expected 1 ranked position, got %d", len(ranked))
@@ -56,8 +54,8 @@ func TestRankPositions_FilterBySide(t *testing.T) {
 		{ID: 2, Side: -1, Leverage: 10, EntryPrice: "60000", Quantity: "0.01", Margin: "60"},
 	}
 
-	// Target short positions at price 55000 (short is profitable)
-	ranked := RankPositions(positions, -1, d("55000"))
+	// Target short positions at market=55000, bankruptcyPrice=58000 (short entry 60000, profitable at both)
+	ranked := RankPositions(positions, -1, d("55000"), d("58000"))
 
 	if len(ranked) != 1 {
 		t.Fatalf("expected 1 ranked position, got %d", len(ranked))
@@ -67,18 +65,21 @@ func TestRankPositions_FilterBySide(t *testing.T) {
 	}
 }
 
-func TestCalcADLQuantity(t *testing.T) {
-	// deficit=600, price=60000 -> qty=0.01
-	qty := CalcADLQuantity(d("600"), d("60000"))
-	if !qty.Equal(d("0.01")) {
-		t.Errorf("expected 0.01, got %s", qty)
+func TestRankPositions_ExcludesUnprofitableAtBankruptcyPrice(t *testing.T) {
+	positions := []*cache.CachedPosition{
+		// Long @ 53000, profitable at market (55000) but NOT at bankruptcy (52000)
+		{ID: 1, Side: 1, Leverage: 10, EntryPrice: "53000", Quantity: "0.01", Margin: "53"},
+		// Long @ 40000, profitable at BOTH market and bankruptcy
+		{ID: 2, Side: 1, Leverage: 10, EntryPrice: "40000", Quantity: "0.01", Margin: "40"},
 	}
-}
 
-func TestCalcADLQuantity_ZeroPrice(t *testing.T) {
-	qty := CalcADLQuantity(d("600"), d("0"))
-	if !qty.IsZero() {
-		t.Error("expected zero for zero price")
+	ranked := RankPositions(positions, 1, d("55000"), d("52000"))
+
+	if len(ranked) != 1 {
+		t.Fatalf("expected 1 ranked (only profitable at both prices), got %d", len(ranked))
+	}
+	if ranked[0].Position.ID != 2 {
+		t.Error("expected position 2 (profitable at both market and bankruptcy)")
 	}
 }
 
@@ -89,14 +90,15 @@ func TestExecuteADL_FullyClosed(t *testing.T) {
 				ID: 1, UserID: 1, Side: 1, Leverage: 10,
 				EntryPrice: "50000", Quantity: "0.01", Margin: "50",
 			},
-			PnlRatio: d("200"),
-			Score:    d("2000"),
 		},
 	}
 
-	// deficit=1000 at price=60000 -> needs 1000/60000=0.0167 BTC
-	// Position only has 0.01, so fully closed
-	results, _ := ExecuteADL(ranked, d("1000"), d("60000"))
+	// Long @ 50000, bankruptcy=45000, market=60000
+	// Profit given up per unit = (60000-50000) - (45000-50000) = 10000 - (-5000)
+	// Wait, settlement is capped at entry for this case since bankruptcy(45000) < entry(50000)
+	// settlementPrice = 50000 (capped), profitGivenUp = (60000-50000)*1 - (50000-50000)*1 = 10000
+	// neededQty = 1000 / 10000 = 0.1, but position only has 0.01
+	results, remaining := ExecuteADL(ranked, d("1000"), d("45000"), d("60000"))
 
 	if len(results) != 1 {
 		t.Fatalf("expected 1 result, got %d", len(results))
@@ -107,22 +109,28 @@ func TestExecuteADL_FullyClosed(t *testing.T) {
 	if !results[0].ReducedQty.Equal(d("0.01")) {
 		t.Errorf("expected reduced qty=0.01, got %s", results[0].ReducedQty)
 	}
+	if !remaining.IsPositive() {
+		t.Error("deficit should not be fully covered with only 0.01 BTC")
+	}
 }
 
 func TestExecuteADL_PartiallyClosed(t *testing.T) {
 	ranked := []*RankedPosition{
 		{
 			Position: &cache.CachedPosition{
-				ID: 1, UserID: 1, Side: 1, Leverage: 10,
-				EntryPrice: "50000", Quantity: "1", Margin: "5000",
+				ID: 1, UserID: 1, Side: -1, Leverage: 10,
+				EntryPrice: "60000", Quantity: "1", Margin: "6000",
 			},
-			PnlRatio: d("200"),
-			Score:    d("2000"),
 		},
 	}
 
-	// deficit=600 at price=60000 -> needs 0.01 BTC, position has 1 BTC
-	results, remaining := ExecuteADL(ranked, d("600"), d("60000"))
+	// Short @ 60000, bankruptcy=66000, market=53000
+	// settlementPrice = min(66000, 60000) = 60000 (capped at entry)
+	// marketPnlPerUnit = (53000-60000)*(-1) = 7000
+	// settlePnlPerUnit = (60000-60000)*(-1) = 0
+	// profitGivenUp = 7000 - 0 = 7000
+	// neededQty = 600 / 7000 ≈ 0.0857
+	results, remaining := ExecuteADL(ranked, d("600"), d("66000"), d("53000"))
 
 	if len(results) != 1 {
 		t.Fatalf("expected 1 result, got %d", len(results))
@@ -130,8 +138,39 @@ func TestExecuteADL_PartiallyClosed(t *testing.T) {
 	if results[0].FullyClosed {
 		t.Error("position should not be fully closed")
 	}
-	if remaining.IsPositive() {
-		t.Errorf("deficit should be covered, remaining=%s", remaining)
+	if remaining.GreaterThan(d("0.01")) {
+		t.Errorf("deficit should be roughly covered, remaining=%s", remaining)
+	}
+	// Counterparty's realized PnL should be 0 (settled at entry price)
+	if !results[0].RealizedPnl.IsZero() {
+		t.Errorf("expected 0 realized PnL (settled at entry), got %s", results[0].RealizedPnl)
+	}
+}
+
+func TestExecuteADL_NeverCreatesLoss(t *testing.T) {
+	// Counterparty long @ 53500, market @ 53000 (barely profitable)
+	// Bankruptcy price @ 54000 — ABOVE entry, would cause loss without capping
+	ranked := []*RankedPosition{
+		{
+			Position: &cache.CachedPosition{
+				ID: 1, UserID: 1, Side: -1, Leverage: 10,
+				EntryPrice: "53500", Quantity: "0.1", Margin: "535",
+			},
+		},
+	}
+
+	// Short @ 53500, market=55000 (losing), bankruptcy=54000
+	// upnl at market = (53500-55000)*(-1)*0.1 = -150 (losing!)
+	// This position should not be ranked (filtered in RankPositions)
+	// But if it somehow gets through, ExecuteADL should skip it
+
+	results, _ := ExecuteADL(ranked, d("100"), d("54000"), d("55000"))
+
+	// Should produce no results because settlement can't extract profit
+	for _, r := range results {
+		if r.RealizedPnl.IsNegative() {
+			t.Errorf("ADL created a loss for counterparty: pnl=%s", r.RealizedPnl)
+		}
 	}
 }
 
@@ -140,11 +179,11 @@ func TestGetADLIndicator(t *testing.T) {
 		pnlRatio string
 		expected int
 	}{
-		{"50", 1},    // 50% ROI
-		{"150", 2},   // 150% ROI
-		{"250", 3},   // 250% ROI
-		{"350", 4},   // 350% ROI
-		{"450", 5},   // 450% ROI
+		{"50", 1},
+		{"150", 2},
+		{"250", 3},
+		{"350", 4},
+		{"450", 5},
 	}
 
 	for _, tt := range tests {
