@@ -201,7 +201,6 @@ func (m *Monitor) OnPriceUpdate(lastPrice decimal.Decimal) {
 	}
 }
 
-// checkLimitOrders removed — limit orders are now auto-filled by orderbook matching.
 
 // handleLiquidation processes a liquidation with insurance fund integration.
 func (m *Monitor) handleLiquidation(pos *cache.CachedPosition, lastPrice, entryPrice, quantity, margin decimal.Decimal) {
