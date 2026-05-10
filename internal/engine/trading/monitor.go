@@ -272,6 +272,7 @@ func (m *Monitor) handleForceTP(pos *cache.CachedPosition, lastPrice decimal.Dec
 func (m *Monitor) handleClose(pos *cache.CachedPosition, lastPrice decimal.Decimal, reason int) {
 	result, err := m.engine.ClosePositionInternal(pos.ID, lastPrice, reason)
 	if err != nil {
+		log.Printf("[Monitor] handleClose pos=%d reason=%d failed: %v (will retry next tick)", pos.ID, reason, err)
 		return
 	}
 	if m.onPositionClose != nil {
