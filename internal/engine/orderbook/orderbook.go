@@ -101,6 +101,7 @@ func (b *Book) PlaceMarket(order *Order) (trades []*Trade) {
 	defer b.mu.Unlock()
 
 	order.IsMaker = false
+	order.Price = decimal.Zero // market order has no price limit
 	order.Timestamp = time.Now()
 
 	if order.Side == 1 {
