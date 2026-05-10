@@ -17,7 +17,7 @@ type CachedPosition struct {
 	ID            int64
 	UserID        int64
 	Side          int
-	MarginMode    int // 1=逐仓(isolated), 2=全仓(cross)
+	MarginMode    int // model.MarginModeIsolated or model.MarginModeCross
 	Leverage      int
 	EntryPrice    string
 	Quantity      string

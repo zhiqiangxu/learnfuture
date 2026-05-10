@@ -84,26 +84,34 @@ func (m *Monitor) OnPriceUpdate(lastPrice decimal.Decimal) {
 	// 1. Check all active positions
 	allPositions := m.positionCache.GetAll()
 
-	// Pre-calculate cross margin account equity for cross-margin liquidation check
-	// Cross margin: all cross positions share account balance
-	// Liquidation when: accountEquity < sum(maintenanceMargin of all cross positions)
-	crossMaintenanceTotal := decimal.Zero
-	crossUpnlTotal := decimal.Zero
-	var crossPositionIDs []int64
+	// Pre-calculate cross margin data PER USER
+	type crossData struct {
+		upnlTotal        decimal.Decimal
+		maintenanceTotal decimal.Decimal
+		positionIDs      []int64
+	}
+	crossByUser := make(map[int64]*crossData)
 	for _, pos := range allPositions {
-		if pos.MarginMode == 2 { // cross
+		if pos.MarginMode == model.MarginModeCross {
+			cd, ok := crossByUser[pos.UserID]
+			if !ok {
+				cd = &crossData{}
+				crossByUser[pos.UserID] = cd
+			}
 			ep, _ := decimal.NewFromString(pos.EntryPrice)
 			qty, _ := decimal.NewFromString(pos.Quantity)
 			upnl := position.CalcUnrealizedPnL(ep, lastPrice, qty, pos.Side)
-			crossUpnlTotal = crossUpnlTotal.Add(upnl)
+			cd.upnlTotal = cd.upnlTotal.Add(upnl)
 			mg, _ := decimal.NewFromString(pos.Margin)
-			// maintenance margin = position value * maintenance rate
 			posValue := mg.Mul(decimal.NewFromInt(int64(pos.Leverage)))
 			maintMargin := posValue.Mul(m.engine.GetMaintRate())
-			crossMaintenanceTotal = crossMaintenanceTotal.Add(maintMargin)
-			crossPositionIDs = append(crossPositionIDs, pos.ID)
+			cd.maintenanceTotal = cd.maintenanceTotal.Add(maintMargin)
+			cd.positionIDs = append(cd.positionIDs, pos.ID)
 		}
 	}
+
+	// Track which users have already been cross-liquidated to avoid double processing
+	crossLiquidated := make(map[int64]bool)
 
 	for _, pos := range allPositions {
 		entryPrice, _ := decimal.NewFromString(pos.EntryPrice)
@@ -113,14 +121,16 @@ func (m *Monitor) OnPriceUpdate(lastPrice decimal.Decimal) {
 		forceTpPrice, _ := decimal.NewFromString(pos.ForceTpPrice)
 
 		// 2a. Liquidation check — uses MARK PRICE (防操纵)
-		if pos.MarginMode == 2 {
-			// Cross margin: check account-level equity vs total maintenance margin
-			// equity = balance + totalCrossUpnl
+		if pos.MarginMode == model.MarginModeCross {
+			if crossLiquidated[pos.UserID] {
+				continue // already liquidated all cross positions for this user
+			}
+			cd := crossByUser[pos.UserID]
 			balance := m.engine.GetMemAccounts().GetBalance(pos.UserID)
-			accountEquity := balance.Add(crossUpnlTotal)
-			if accountEquity.LessThanOrEqual(crossMaintenanceTotal) {
-				// Cross margin liquidation: liquidate ALL cross positions
-				for _, cpID := range crossPositionIDs {
+			accountEquity := balance.Add(cd.upnlTotal)
+			if accountEquity.LessThanOrEqual(cd.maintenanceTotal) {
+				// Cross margin liquidation: liquidate ALL cross positions for THIS USER
+				for _, cpID := range cd.positionIDs {
 					cp, ok := m.positionCache.Get(cpID)
 					if !ok {
 						continue
@@ -130,10 +140,11 @@ func (m *Monitor) OnPriceUpdate(lastPrice decimal.Decimal) {
 					cpMargin, _ := decimal.NewFromString(cp.Margin)
 					m.handleLiquidation(cp, lastPrice, cpEntry, cpQty, cpMargin)
 				}
+				crossLiquidated[pos.UserID] = true
 				continue
 			}
 		} else {
-			// Isolated margin: per-position check (original behavior)
+			// Isolated margin: per-position check
 			if shouldLiquidate(markPrice, liqPrice, pos.Side) {
 				m.handleLiquidation(pos, lastPrice, entryPrice, quantity, margin)
 				continue
