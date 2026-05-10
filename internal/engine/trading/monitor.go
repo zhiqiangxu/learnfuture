@@ -284,7 +284,9 @@ func (m *Monitor) triggerADL(liquidatedSide int, deficit, bankruptcyPrice, curre
 	ranked := adl.RankPositions(allPositions, targetSide, currentPrice)
 
 	if len(ranked) == 0 {
-		log.Printf("[Monitor] ADL: no opposing positions to reduce")
+		// This should not happen if ∑longs ≡ ∑shorts is maintained.
+		// If it does, it means the invariant is broken — critical error.
+		log.Printf("[Monitor] CRITICAL: ADL has no opposing positions to reduce, deficit=%s uncovered", deficit)
 		return
 	}
 
@@ -315,7 +317,9 @@ func (m *Monitor) triggerADL(liquidatedSide int, deficit, bankruptcyPrice, curre
 	}
 
 	if remaining.IsPositive() {
-		log.Printf("[Monitor] ADL: still %s deficit uncovered (socialized loss)", remaining)
+		// All opposing positions exhausted but deficit still uncovered.
+		// This is "socialized loss" — the last resort in a real exchange.
+		log.Printf("[Monitor] CRITICAL: ADL exhausted all opposing positions, %s deficit uncovered (socialized loss)", remaining)
 	}
 }
 
