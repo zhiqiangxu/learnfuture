@@ -1,7 +1,6 @@
 package cache
 
 import (
-	"sort"
 	"sync"
 
 	"github.com/shopspring/decimal"
@@ -65,41 +64,3 @@ func (c *OrderCache) GetByUser(userID int64) []*CachedOrder {
 	return result
 }
 
-// GetTriggered returns orders that should be triggered at the given price.
-// Long limit orders trigger when price <= order price.
-// Short limit orders trigger when price >= order price.
-func (c *OrderCache) GetTriggered(currentPrice decimal.Decimal) []*CachedOrder {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	var triggered []*CachedOrder
-	for _, o := range c.orders {
-		if o.Side == 1 && currentPrice.LessThanOrEqual(o.Price) {
-			triggered = append(triggered, o)
-		} else if o.Side == -1 && currentPrice.GreaterThanOrEqual(o.Price) {
-			triggered = append(triggered, o)
-		}
-	}
-	return triggered
-}
-
-// GetAllSorted returns all orders sorted: longs by price desc, shorts by price asc.
-func (c *OrderCache) GetAllSorted() []*CachedOrder {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	result := make([]*CachedOrder, 0, len(c.orders))
-	for _, o := range c.orders {
-		result = append(result, o)
-	}
-	sort.Slice(result, func(i, j int) bool {
-		if result[i].Side != result[j].Side {
-			return result[i].Side > result[j].Side // longs first
-		}
-		if result[i].Side == 1 {
-			return result[i].Price.GreaterThan(result[j].Price)
-		}
-		return result[i].Price.LessThan(result[j].Price)
-	})
-	return result
-}

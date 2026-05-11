@@ -14,13 +14,6 @@ func CalcUnrealizedPnL(entryPrice, currentPrice, quantity decimal.Decimal, side 
 	return currentPrice.Sub(entryPrice).Mul(quantity).Mul(decimal.NewFromInt(int64(side)))
 }
 
-// CalcRealizedPnL calculates realized PnL after closing.
-// formula: (closePrice - entryPrice) * quantity * side - fee
-func CalcRealizedPnL(entryPrice, closePrice, quantity decimal.Decimal, side int, fee decimal.Decimal) decimal.Decimal {
-	pnl := closePrice.Sub(entryPrice).Mul(quantity).Mul(decimal.NewFromInt(int64(side)))
-	return pnl.Sub(fee)
-}
-
 // CalcROI calculates return on investment.
 // formula: unrealizedPnl / margin * 100
 func CalcROI(unrealizedPnl, margin decimal.Decimal) decimal.Decimal {
@@ -96,13 +89,6 @@ func CalcForceTpPrice(entryPrice decimal.Decimal, leverage int, side int, forceT
 	}
 	// short
 	return entryPrice.Mul(one.Sub(roiOverLev))
-}
-
-// CalcFee calculates the trading fee.
-// formula: positionValue * feeRate = margin * leverage * feeRate
-func CalcFee(margin decimal.Decimal, leverage int, feeRate decimal.Decimal) decimal.Decimal {
-	positionValue := margin.Mul(decimal.NewFromInt(int64(leverage)))
-	return positionValue.Mul(feeRate)
 }
 
 // CalcQuantity calculates the BTC quantity for a given margin and leverage.

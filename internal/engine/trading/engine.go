@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"log"
 	"sync"
 	"sync/atomic"
 
@@ -134,9 +133,7 @@ func (e *Engine) GetMemAccounts() *cache.AccountCache  { return e.memAccounts }
 func (e *Engine) WithLock(fn func())                    { e.mu.Lock(); defer e.mu.Unlock(); fn() }
 func (e *Engine) GetBook() *orderbook.Book              { return e.book }
 func (e *Engine) GetClearance() *clearing.Clearance      { return e.clearance }
-func (e *Engine) GetFeeRate() decimal.Decimal            { return e.clearance.GetMaintRate() }
 func (e *Engine) GetMaintRate() decimal.Decimal          { return e.clearance.GetMaintRate() }
-func (e *Engine) GetForceTpROI() decimal.Decimal         { return e.clearance.GetForceTpROI() }
 func (e *Engine) GetMaxLeverage() int                    { return e.maxLeverage }
 
 // ============================================================
@@ -388,59 +385,6 @@ func (e *Engine) ClosePositionInternal(positionID int64, closePrice decimal.Deci
 }
 
 // ============================================================
-// applyClose: clearing → memory → settlement
-// ============================================================
-func (e *Engine) applyClose(pos *model.Position, closePrice, closedQty decimal.Decimal, closeReason int) (*CloseResult, error) {
-	// --- CLEARING ---
-	cr := e.clearance.ClearClose(&clearing.CloseClearingInput{
-		Position: pos, ClosePrice: closePrice, CloseQty: closedQty, Reason: closeReason,
-	})
-
-	// --- MEMORY ---
-	if closeReason == model.CloseReasonLiquidation {
-		e.memAccounts.AddPnl(pos.UserID, cr.CloseMargin.Neg())
-	} else {
-		e.memAccounts.ReturnMarginWithPnl(pos.UserID, cr.CloseMargin, cr.NetPnl)
-	}
-	if cr.IsPartial {
-		e.positionCache.Update(pos.ID, func(cp *cache.CachedPosition) {
-			cp.Quantity = cr.RemainingQty.String()
-			cp.Margin = cr.RemainMargin.String()
-			cp.LiqPrice = cr.RemainLiqPrice.String()
-			cp.ForceTpPrice = cr.RemainFtpPrice.String()
-			cp.State.Store(cache.PosStateActive)
-		})
-	} else {
-		e.positionCache.Remove(pos.ID)
-	}
-
-	// --- SETTLEMENT ---
-	closeOrder := &model.Order{
-		UserID: pos.UserID, Symbol: "BTCUSDT", Side: -pos.Side,
-		OrderType: model.OrderTypeMarket, Leverage: pos.Leverage,
-		Quantity: cr.ClosedQty, MarginCost: decimal.Zero, Status: model.OrderStatusFilled,
-	}
-	closeOrder.FilledPrice = &closePrice
-	closeTrade := &model.Trade{
-		UserID: pos.UserID, PositionID: &pos.ID, Symbol: "BTCUSDT", Side: -pos.Side,
-		Price: closePrice, Quantity: cr.ClosedQty,
-		Fee: cr.CloseFee, RealizedPnl: cr.RealizedPnl, IsClose: true, CloseReason: closeReason,
-	}
-	e.settler.Submit(&clearing.SettleEvent{
-		Type: clearing.EventClosePosition, Order: closeOrder, Trade: closeTrade,
-		PositionID: pos.ID, UserID: pos.UserID, CloseReason: closeReason,
-		ClosePrice: closePrice, Margin: cr.CloseMargin, RealizedPnl: cr.RealizedPnl,
-		Fee: cr.CloseFee, NetPnl: cr.NetPnl,
-	})
-
-	return &CloseResult{
-		RawPnl: cr.RawPnl, RealizedPnl: cr.RealizedPnl, Fee: cr.CloseFee, FundingPnl: cr.CloseFundingPnl,
-		NetPnl: cr.NetPnl, ClosePrice: closePrice, ClosedQty: cr.ClosedQty,
-		RemainingQty: cr.RemainingQty, IsPartial: cr.IsPartial,
-	}, nil
-}
-
-// ============================================================
 // FillLimitOrder (called by Monitor)
 // ============================================================
 func (e *Engine) FillLimitOrder(cachedOrder *cache.CachedOrder) (*PlaceOrderResult, error) {
@@ -570,8 +514,4 @@ func (e *Engine) ProcessTrades(trades []*orderbook.Trade, takerUserID int64, tak
 		}
 	}
 	return takerResults
-}
-
-func LogError(op string, err error) {
-	if err != nil { log.Printf("[TradingEngine] %s error: %v", op, err) }
 }

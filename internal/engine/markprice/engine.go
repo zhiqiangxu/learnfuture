@@ -210,20 +210,6 @@ func (e *Engine) GetMarkPrice() decimal.Decimal {
 	return e.markPrice
 }
 
-// GetLastPrice returns the futures last trade price.
-func (e *Engine) GetLastPrice() decimal.Decimal {
-	e.mu.RLock()
-	defer e.mu.RUnlock()
-	return e.lastPrice
-}
-
-// GetIndexPrice returns the spot index price.
-func (e *Engine) GetIndexPrice() decimal.Decimal {
-	e.mu.RLock()
-	defer e.mu.RUnlock()
-	return e.indexPrice
-}
-
 // GetPrices returns all three prices at once.
 func (e *Engine) GetPrices() (last, mark, index decimal.Decimal) {
 	e.mu.RLock()

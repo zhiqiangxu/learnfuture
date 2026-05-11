@@ -319,10 +319,3 @@ func (s *Scheduler) SetRate(rate decimal.Decimal) {
 	s.currentRate = rate
 }
 
-// FormatPayment formats the funding payment for display.
-func FormatPayment(payment decimal.Decimal) string {
-	if payment.IsPositive() {
-		return fmt.Sprintf("+%s", payment.StringFixed(4))
-	}
-	return payment.StringFixed(4)
-}

@@ -56,26 +56,6 @@ func TestCalcUnrealizedPnL_NoPriceChange(t *testing.T) {
 	}
 }
 
-// --- CalcRealizedPnL ---
-
-func TestCalcRealizedPnL_LongTakeProfit(t *testing.T) {
-	// (65000 - 60000) * 0.01 * 1 - 0.4 = 50 - 0.4 = 49.6
-	result := CalcRealizedPnL(d("60000"), d("65000"), d("0.01"), 1, d("0.4"))
-	expected := d("49.6")
-	if !result.Equal(expected) {
-		t.Errorf("expected %s, got %s", expected, result)
-	}
-}
-
-func TestCalcRealizedPnL_ShortTakeProfit(t *testing.T) {
-	// (55000 - 60000) * 0.01 * -1 - 0.4 = 50 - 0.4 = 49.6
-	result := CalcRealizedPnL(d("60000"), d("55000"), d("0.01"), -1, d("0.4"))
-	expected := d("49.6")
-	if !result.Equal(expected) {
-		t.Errorf("expected %s, got %s", expected, result)
-	}
-}
-
 // --- CalcROI ---
 
 func TestCalcROI_10xLeverage10PercentUp(t *testing.T) {
@@ -213,17 +193,6 @@ func TestCalcForceTpPrice_HigherLeverageCloser(t *testing.T) {
 	// Higher leverage -> force TP price closer to entry
 	if ftp20.GreaterThanOrEqual(ftp10) {
 		t.Errorf("20x force TP (%s) should be less than 10x (%s)", ftp20, ftp10)
-	}
-}
-
-// --- CalcFee ---
-
-func TestCalcFee(t *testing.T) {
-	// margin=100, leverage=10, feeRate=0.0004 -> 100*10*0.0004 = 0.4
-	result := CalcFee(d("100"), 10, d("0.0004"))
-	expected := d("0.4")
-	if !result.Equal(expected) {
-		t.Errorf("expected %s, got %s", expected, result)
 	}
 }
 
