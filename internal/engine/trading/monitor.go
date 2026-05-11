@@ -269,7 +269,12 @@ func (m *Monitor) handleForceTP(pos *cache.CachedPosition, lastPrice decimal.Dec
 	}
 }
 
+// handleClose handles TP/SL closes only. Liquidation and ForceTP have their own handlers.
 func (m *Monitor) handleClose(pos *cache.CachedPosition, lastPrice decimal.Decimal, reason int) {
+	if reason == model.CloseReasonLiquidation || reason == model.CloseReasonForceTp {
+		log.Printf("[Monitor] BUG: handleClose called with reason=%d, should use handleLiquidation/handleForceTP", reason)
+		return
+	}
 	result, err := m.engine.ClosePositionInternal(pos.ID, lastPrice, reason)
 	if err != nil {
 		log.Printf("[Monitor] handleClose pos=%d reason=%d failed: %v (will retry next tick)", pos.ID, reason, err)
