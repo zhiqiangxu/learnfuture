@@ -7,7 +7,6 @@ import (
 
 	"learn_future/internal/cache"
 	"learn_future/internal/engine/clearing"
-	"learn_future/internal/engine/position"
 	"learn_future/internal/model"
 )
 
@@ -63,24 +62,14 @@ func (e *Engine) handleOpen(userID int64, side int, qty, price decimal.Decimal, 
 		leverage = 1
 	}
 
-	positionValue := price.Mul(qty)
-	margin := positionValue.Div(decimal.NewFromInt(int64(leverage)))
-
-	var fee decimal.Decimal
-	if isMaker {
-		fee, _ = e.clearance.CalcMakerFee(positionValue)
-	} else {
-		fee, _ = e.clearance.CalcTakerFee(positionValue)
-	}
-	totalCost := margin.Add(fee)
+	cr := e.clearance.CalcOpen(price, qty, leverage, side, isMaker)
+	margin, fee, totalCost := cr.Margin, cr.Fee, cr.TotalCost
+	liqPrice, ftpPrice := cr.LiqPrice, cr.ForceTpPrice
 
 	if !e.memAccounts.Deduct(userID, totalCost) {
 		log.Printf("[UpdatePosition] user %d insufficient balance for open, need=%s", userID, totalCost)
 		return &PositionUpdateResult{Action: "failed"}
 	}
-
-	liqPrice := e.clearance.CalcLiqPrice(price, leverage, side)
-	ftpPrice := e.clearance.CalcForceTpPrice(price, leverage, side)
 
 	posID := e.nextPosID.Add(1)
 	e.positionCache.Add(&cache.CachedPosition{
@@ -130,18 +119,15 @@ func (e *Engine) handleIncrease(userID int64, existing *cache.CachedPosition, qt
 	oldEntry, _ := decimal.NewFromString(existing.EntryPrice)
 	oldMargin, _ := decimal.NewFromString(existing.Margin)
 
-	newQty := oldQty.Add(qty)
-	newEntry := oldEntry.Mul(oldQty).Add(price.Mul(qty)).Div(newQty)
-	addMargin := price.Mul(qty).Div(decimal.NewFromInt(int64(existing.Leverage)))
-	newMargin := oldMargin.Add(addMargin)
+	cr := e.clearance.CalcIncrease(oldEntry, oldQty, oldMargin, existing.Leverage, existing.Side, qty, price)
+	addMargin := cr.AddMargin
+	newQty, newEntry, newMargin := cr.NewQty, cr.NewEntry, cr.NewMargin
+	newLiqPrice, newFtpPrice := cr.LiqPrice, cr.ForceTpPrice
 
 	if !e.memAccounts.Deduct(userID, addMargin) {
 		log.Printf("[UpdatePosition] user %d insufficient balance for increase, need=%s", userID, addMargin)
 		return &PositionUpdateResult{Action: "failed"}
 	}
-
-	newLiqPrice := e.clearance.CalcLiqPrice(newEntry, existing.Leverage, existing.Side)
-	newFtpPrice := e.clearance.CalcForceTpPrice(newEntry, existing.Leverage, existing.Side)
 
 	e.positionCache.Update(existing.ID, func(cp *cache.CachedPosition) {
 		cp.EntryPrice = newEntry.String()
@@ -173,17 +159,9 @@ func (e *Engine) handleReduce(userID int64, existing *cache.CachedPosition, trad
 	existingMargin, _ := decimal.NewFromString(existing.Margin)
 	fundingPnl, _ := decimal.NewFromString(existing.FundingPnl)
 
-	closeQty := decimal.Min(qty, existingQty)
-	ratio := closeQty.Div(existingQty)
-	closeMargin := existingMargin.Mul(ratio)
-	closeFunding := fundingPnl.Mul(ratio)
-
-	// Calculate PnL
-	rawPnl := position.CalcUnrealizedPnL(existingEntry, price, closeQty, existing.Side)
-	posValue := closeQty.Mul(price)
-	closeFee, _ := e.clearance.CalcTakerFee(posValue)
-	realizedPnl := rawPnl.Sub(closeFee)
-	netPnl := realizedPnl.Add(closeFunding)
+	cr := e.clearance.CalcReduce(existingEntry, price, existingQty, existingMargin, fundingPnl, existing.Leverage, existing.Side, qty)
+	closeQty, closeMargin, closeFunding := cr.CloseQty, cr.CloseMargin, cr.CloseFunding
+	rawPnl, closeFee, realizedPnl, netPnl := cr.RawPnl, cr.Fee, cr.RealizedPnl, cr.NetPnl
 
 	// Return margin + PnL to account
 	if closeReason == model.CloseReasonLiquidation {
@@ -192,27 +170,19 @@ func (e *Engine) handleReduce(userID int64, existing *cache.CachedPosition, trad
 		e.memAccounts.ReturnMarginWithPnl(userID, closeMargin, netPnl)
 	}
 
-	if closeQty.Equal(existingQty) {
-		// Full close
+	if cr.IsFullClose {
 		e.positionCache.Remove(existing.ID)
 		log.Printf("[UpdatePosition] user %d closed position %d, pnl=%s", userID, existing.ID, netPnl.StringFixed(2))
 	} else {
-		// Partial close
-		remainQty := existingQty.Sub(closeQty)
-		remainMargin := existingMargin.Sub(closeMargin)
-		remainFunding := fundingPnl.Sub(closeFunding)
-		remainLiqPrice := e.clearance.CalcLiqPrice(existingEntry, existing.Leverage, existing.Side)
-		remainFtpPrice := e.clearance.CalcForceTpPrice(existingEntry, existing.Leverage, existing.Side)
-
 		e.positionCache.Update(existing.ID, func(cp *cache.CachedPosition) {
-			cp.Quantity = remainQty.String()
-			cp.Margin = remainMargin.String()
-			cp.FundingPnl = remainFunding.String()
-			cp.LiqPrice = remainLiqPrice.String()
-			cp.ForceTpPrice = remainFtpPrice.String()
+			cp.Quantity = cr.RemainQty.String()
+			cp.Margin = cr.RemainMargin.String()
+			cp.FundingPnl = cr.RemainFunding.String()
+			cp.LiqPrice = cr.RemainLiqPrice.String()
+			cp.ForceTpPrice = cr.RemainFtpPrice.String()
 			cp.State.Store(cache.PosStateActive)
 		})
-		log.Printf("[UpdatePosition] user %d reduced position %d by %s, remaining=%s", userID, existing.ID, closeQty, remainQty)
+		log.Printf("[UpdatePosition] user %d reduced position %d by %s, remaining=%s", userID, existing.ID, closeQty, cr.RemainQty)
 	}
 
 	// Async DB persistence
@@ -232,9 +202,9 @@ func (e *Engine) handleReduce(userID int64, existing *cache.CachedPosition, trad
 		PositionID: existing.ID, UserID: userID, CloseReason: closeReason,
 		ClosePrice: price, Margin: closeMargin, RealizedPnl: realizedPnl,
 		Fee: closeFee, NetPnl: netPnl,
-		IsPartialClose: !closeQty.Equal(existingQty),
-		RemainingQty: existingQty.Sub(closeQty),
-		RemainingMargin: existingMargin.Sub(closeMargin),
+		IsPartialClose: !cr.IsFullClose,
+		RemainingQty: cr.RemainQty,
+		RemainingMargin: cr.RemainMargin,
 	})
 
 	// If qty exceeds existing position, open remainder in new direction
@@ -244,12 +214,12 @@ func (e *Engine) handleReduce(userID int64, existing *cache.CachedPosition, trad
 	}
 
 	return &PositionUpdateResult{
-		Action: func() string { if closeQty.Equal(existingQty) { return "close" }; return "reduce" }(),
+		Action: func() string { if cr.IsFullClose { return "close" }; return "reduce" }(),
 		PositionID: existing.ID, Side: existing.Side,
 		EntryPrice: existingEntry, Fee: closeFee,
 		RawPnl: rawPnl, RealizedPnl: realizedPnl, FundingPnl: closeFunding, NetPnl: netPnl,
-		ClosedQty: closeQty, RemainingQty: existingQty.Sub(closeQty),
-		IsPartial: !closeQty.Equal(existingQty),
+		ClosedQty: closeQty, RemainingQty: cr.RemainQty,
+		IsPartial: !cr.IsFullClose,
 	}
 }
 
