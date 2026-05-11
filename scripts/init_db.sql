@@ -122,6 +122,17 @@ CREATE TABLE IF NOT EXISTS klines (
 );
 CREATE INDEX IF NOT EXISTS idx_klines_query ON klines(interval, open_time DESC);
 
+-- 系统用户：做市商(0) 和 强平引擎(-1)
+INSERT INTO users (id, openid, nickname) VALUES
+    (0, 'system_market_maker', 'MarketMaker'),
+    (-1, 'system_liquidation', 'LiquidationEngine')
+ON CONFLICT DO NOTHING;
+
+INSERT INTO accounts (user_id, balance) VALUES
+    (0, 100000000),
+    (-1, 100000000)
+ON CONFLICT DO NOTHING;
+
 -- 学习进度
 CREATE TABLE IF NOT EXISTS tutorial_progress (
     id           BIGSERIAL PRIMARY KEY,

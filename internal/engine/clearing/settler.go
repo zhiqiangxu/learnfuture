@@ -175,6 +175,9 @@ func (s *Settler) settleOpen(evt *SettleEvent) {
 			}
 		}
 		if evt.Trade != nil {
+			if evt.Order != nil && evt.Order.ID > 0 {
+				evt.Trade.OrderID = evt.Order.ID
+			}
 			if evt.Position != nil && evt.Position.ID > 0 {
 				evt.Trade.PositionID = &evt.Position.ID
 			}
