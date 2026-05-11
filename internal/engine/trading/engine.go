@@ -3,6 +3,7 @@ package trading
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"log"
 	"sync"
 	"sync/atomic"
@@ -348,11 +349,14 @@ func (e *Engine) ClosePosition(positionID, userID int64, closeReason int, closeQ
 // ClosePositionInternal (risk engine auto-close) — pure memory, no DB read
 // ============================================================
 func (e *Engine) ClosePositionInternal(positionID int64, closePrice decimal.Decimal, closeReason int) (*CloseResult, error) {
+	// Liquidation and ADL bypass orderbook — they should not go through this function
+	if closeReason == model.CloseReasonLiquidation || closeReason == model.CloseReasonADL {
+		return nil, fmt.Errorf("ClosePositionInternal called with reason=%d, should use TakeOver/UpdatePosition", closeReason)
+	}
+
 	var targetState int32
 	switch closeReason {
-	case model.CloseReasonLiquidation:
-		targetState = cache.PosStateLiquidating
-	case model.CloseReasonForceTp, model.CloseReasonADL:
+	case model.CloseReasonForceTp:
 		targetState = cache.PosStateForceTPing
 	default:
 		targetState = cache.PosStateClosing
