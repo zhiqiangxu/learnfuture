@@ -914,7 +914,9 @@ function drawKlines(klines) {
   for (let i = 0; i < parsed.length; i += labelStep) {
     const t = new Date(parsed[i].t)
     const x = i * barW + barW / 2
-    ctx.fillText(t.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }), x, H - 5)
+    const showSec = currentKlineInterval && currentKlineInterval.endsWith('s')
+    const timeFmt = showSec ? { hour: '2-digit', minute: '2-digit', second: '2-digit' } : { hour: '2-digit', minute: '2-digit' }
+    ctx.fillText(t.toLocaleTimeString('zh-CN', timeFmt), x, H - 5)
   }
 
   // MA lines
@@ -984,7 +986,9 @@ function drawKlines(klines) {
     const isUp = k.c >= k.o, col = isUp ? '#00d4aa' : '#ff4d6a'
     const chg = ((k.c - k.o) / k.o * 100).toFixed(2)
     const t = new Date(k.t)
-    tooltip.innerHTML = `<span style="color:${col}">${t.toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'})}</span>` +
+    const showSec2 = currentKlineInterval && currentKlineInterval.endsWith('s')
+    const timeFmt2 = showSec2 ? {hour:'2-digit',minute:'2-digit',second:'2-digit'} : {hour:'2-digit',minute:'2-digit'}
+    tooltip.innerHTML = `<span style="color:${col}">${t.toLocaleTimeString('zh-CN',timeFmt2)}</span>` +
       ` O <b>${k.o.toFixed(1)}</b> H <b>${k.h.toFixed(1)}</b> L <b>${k.l.toFixed(1)}</b>` +
       ` C <b style="color:${col}">${k.c.toFixed(1)}</b> <span style="color:${col}">${isUp?'+':''}${chg}%</span>`
   }
