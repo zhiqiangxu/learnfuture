@@ -30,6 +30,20 @@ type CachedPosition struct {
 	State         atomic.Int32
 }
 
+// NewCachedPosition creates a CachedPosition with all fields explicitly set.
+// Use this instead of struct literals to avoid missing fields.
+func NewCachedPosition(id, userID int64, side, marginMode, leverage int, entryPrice, quantity, margin, liqPrice, forceTpPrice, takeProfit, stopLoss, fundingPnl string) *CachedPosition {
+	return &CachedPosition{
+		ID: id, UserID: userID, Side: side,
+		MarginMode: marginMode, Leverage: leverage,
+		EntryPrice: entryPrice, Quantity: quantity,
+		Margin: margin, LiqPrice: liqPrice,
+		ForceTpPrice: forceTpPrice,
+		TakeProfit: takeProfit, StopLoss: stopLoss,
+		FundingPnl: fundingPnl,
+	}
+}
+
 type PositionCache struct {
 	positions sync.Map // key: positionID (int64), value: *CachedPosition
 	userIndex sync.Map // key: userID (int64), value: *sync.Map[positionID]struct{}

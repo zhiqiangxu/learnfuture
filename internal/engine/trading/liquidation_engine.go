@@ -68,7 +68,9 @@ func (le *LiquidationEngine) TakeOver(pos *cache.CachedPosition, bankruptcyPrice
 		syntheticTrade.SellUserID = LiquidationUserID
 	}
 
-	// Verify position is still active (may have been closed by concurrent operation)
+	// Atomically check position is still active (prevents concurrent close).
+	// We don't change state here because ProcessTrades needs the position to be Active
+	// for FindByUserSide to find it. ProcessTrades will remove the position via handleReduce.
 	if pos.State.Load() != cache.PosStateActive {
 		log.Printf("[LiquidationEngine] position %d state is %d (not active), skipping TakeOver", pos.ID, pos.State.Load())
 		return

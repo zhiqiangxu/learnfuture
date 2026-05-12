@@ -76,13 +76,11 @@ func (e *Engine) handleOpen(userID int64, side int, qty, price decimal.Decimal, 
 	}
 
 	posID := e.nextPosID.Add(1)
-	e.positionCache.Add(&cache.CachedPosition{
-		ID: posID, UserID: userID, Side: side,
-		MarginMode: model.MarginModeIsolated, Leverage: leverage,
-		EntryPrice: price.String(), Quantity: qty.String(),
-		Margin: margin.String(), LiqPrice: liqPrice.String(),
-		ForceTpPrice: ftpPrice.String(),
-	})
+	e.positionCache.Add(cache.NewCachedPosition(
+		posID, userID, side, model.MarginModeIsolated, leverage,
+		price.String(), qty.String(), margin.String(),
+		liqPrice.String(), ftpPrice.String(), "", "", "",
+	))
 
 	// Async DB persistence
 	pos := &model.Position{

@@ -295,19 +295,12 @@ func (svc *ServiceContext) LoadCachesFromDB() error {
 		if p.StopLoss != nil {
 			sl = p.StopLoss.String()
 		}
-		svc.PositionCache.Add(&cache.CachedPosition{
-			ID:           p.ID,
-			UserID:       p.UserID,
-			Side:         p.Side,
-			Leverage:     p.Leverage,
-			EntryPrice:   p.EntryPrice.String(),
-			Quantity:     p.Quantity.String(),
-			Margin:       p.Margin.String(),
-			LiqPrice:     p.LiqPrice.String(),
-			ForceTpPrice: p.ForceTpPrice.String(),
-			TakeProfit:   tp,
-			StopLoss:     sl,
-		})
+		svc.PositionCache.Add(cache.NewCachedPosition(
+			p.ID, p.UserID, p.Side, p.MarginMode, p.Leverage,
+			p.EntryPrice.String(), p.Quantity.String(), p.Margin.String(),
+			p.LiqPrice.String(), p.ForceTpPrice.String(), tp, sl,
+			p.FundingPnl.String(),
+		))
 	}
 	log.Printf("[Cache] loaded %d active positions", len(positions))
 

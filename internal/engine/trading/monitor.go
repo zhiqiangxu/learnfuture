@@ -14,7 +14,6 @@ import (
 	"learn_future/internal/ws"
 )
 
-type OrderFillCallback func(userID int64, result *PlaceOrderResult)
 type PositionCloseCallback func(userID int64, positionID int64, result *CloseResult, reason int)
 
 // Monitor is the risk engine that runs on every price tick.
@@ -31,7 +30,6 @@ type Monitor struct {
 	markPriceEngine *markprice.Engine
 	insuranceFund   *insurance.Fund
 	liqEngine       *LiquidationEngine
-	onOrderFill     OrderFillCallback
 	onPositionClose PositionCloseCallback
 }
 
@@ -52,10 +50,6 @@ func NewMonitor(
 		insuranceFund:   insuranceFund,
 		liqEngine:       NewLiquidationEngine(engine, positionCache, engine.GetBook(), insuranceFund),
 	}
-}
-
-func (m *Monitor) SetOnOrderFill(cb OrderFillCallback) {
-	m.onOrderFill = cb
 }
 
 func (m *Monitor) SetOnPositionClose(cb PositionCloseCallback) {
@@ -86,42 +80,37 @@ func (m *Monitor) OnPriceUpdate(lastPrice decimal.Decimal) {
 	// 1. Check all active positions
 	allPositions := m.positionCache.GetAll()
 
-	// Pre-calculate cross margin data PER USER
+	// Pre-calculate cross margin data PER USER (re-read from cache for fresh values)
 	type crossData struct {
 		upnlTotal        decimal.Decimal
 		maintenanceTotal decimal.Decimal
-		positionIDs      []int64
+		positions        []*cache.CachedPosition
 	}
 	crossByUser := make(map[int64]*crossData)
 	for _, pos := range allPositions {
-		if pos.MarginMode == model.MarginModeCross {
-			cd, ok := crossByUser[pos.UserID]
-			if !ok {
-				cd = &crossData{}
-				crossByUser[pos.UserID] = cd
-			}
-			ep, _ := decimal.NewFromString(pos.EntryPrice)
-			qty, _ := decimal.NewFromString(pos.Quantity)
-			upnl := position.CalcUnrealizedPnL(ep, lastPrice, qty, pos.Side)
-			cd.upnlTotal = cd.upnlTotal.Add(upnl)
-			mg, _ := decimal.NewFromString(pos.Margin)
-			posValue := mg.Mul(decimal.NewFromInt(int64(pos.Leverage)))
-			maintMargin := posValue.Mul(m.engine.GetMaintRate())
-			cd.maintenanceTotal = cd.maintenanceTotal.Add(maintMargin)
-			cd.positionIDs = append(cd.positionIDs, pos.ID)
+		if pos.MarginMode != model.MarginModeCross {
+			continue
 		}
+		cd, ok := crossByUser[pos.UserID]
+		if !ok {
+			cd = &crossData{}
+			crossByUser[pos.UserID] = cd
+		}
+		ep, _ := decimal.NewFromString(pos.EntryPrice)
+		qty, _ := decimal.NewFromString(pos.Quantity)
+		upnl := position.CalcUnrealizedPnL(ep, lastPrice, qty, pos.Side)
+		cd.upnlTotal = cd.upnlTotal.Add(upnl)
+		mg, _ := decimal.NewFromString(pos.Margin)
+		posValue := mg.Mul(decimal.NewFromInt(int64(pos.Leverage)))
+		maintMargin := posValue.Mul(m.engine.GetMaintRate())
+		cd.maintenanceTotal = cd.maintenanceTotal.Add(maintMargin)
+		cd.positions = append(cd.positions, pos)
 	}
 
 	// Track which users have already been cross-liquidated to avoid double processing
 	crossLiquidated := make(map[int64]bool)
 
-	for _, snapshotPos := range allPositions {
-		// Re-read position from cache to get latest state (snapshot may be stale)
-		pos, ok := m.positionCache.Get(snapshotPos.ID)
-		if !ok || pos.State.Load() != cache.PosStateActive {
-			continue // position was closed/modified since snapshot
-		}
-
+	for _, pos := range allPositions {
 		entryPrice, _ := decimal.NewFromString(pos.EntryPrice)
 		quantity, _ := decimal.NewFromString(pos.Quantity)
 		margin, _ := decimal.NewFromString(pos.Margin)
@@ -131,18 +120,13 @@ func (m *Monitor) OnPriceUpdate(lastPrice decimal.Decimal) {
 		// 2a. Liquidation check — uses MARK PRICE (防操纵)
 		if pos.MarginMode == model.MarginModeCross {
 			if crossLiquidated[pos.UserID] {
-				continue // already liquidated all cross positions for this user
+				continue
 			}
 			cd := crossByUser[pos.UserID]
 			balance := m.engine.GetMemAccounts().GetBalance(pos.UserID)
 			accountEquity := balance.Add(cd.upnlTotal)
 			if accountEquity.LessThanOrEqual(cd.maintenanceTotal) {
-				// Cross margin liquidation: liquidate ALL cross positions for THIS USER
-				for _, cpID := range cd.positionIDs {
-					cp, ok := m.positionCache.Get(cpID)
-					if !ok {
-						continue
-					}
+				for _, cp := range cd.positions {
 					cpEntry, _ := decimal.NewFromString(cp.EntryPrice)
 					cpQty, _ := decimal.NewFromString(cp.Quantity)
 					cpMargin, _ := decimal.NewFromString(cp.Margin)
@@ -166,11 +150,9 @@ func (m *Monitor) OnPriceUpdate(lastPrice decimal.Decimal) {
 		}
 
 		// 2c. Take-profit — uses LAST PRICE
-		// FIX #8 (OCO): when TP triggers, SL is automatically cancelled (and vice versa)
 		if pos.TakeProfit != "" {
 			tpPrice, _ := decimal.NewFromString(pos.TakeProfit)
 			if shouldTrigger(lastPrice, tpPrice, pos.Side, true) {
-				// OCO: clear SL before closing
 				m.positionCache.Update(pos.ID, func(cp *cache.CachedPosition) {
 					cp.StopLoss = ""
 				})
@@ -183,7 +165,6 @@ func (m *Monitor) OnPriceUpdate(lastPrice decimal.Decimal) {
 		if pos.StopLoss != "" {
 			slPrice, _ := decimal.NewFromString(pos.StopLoss)
 			if shouldTrigger(lastPrice, slPrice, pos.Side, false) {
-				// OCO: clear TP before closing
 				m.positionCache.Update(pos.ID, func(cp *cache.CachedPosition) {
 					cp.TakeProfit = ""
 				})

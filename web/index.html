@@ -68,6 +68,8 @@
 
     /* Depth */
     .depth-row { display: flex; justify-content: space-between; padding: 3px 0; font-size: 12px; }
+    .depth-spread { text-align: center; padding: 6px 0; font-size: 13px; font-weight: bold; border-top: 1px solid #222; border-bottom: 1px solid #222; margin: 2px 0; }
+    .depth-header { display: flex; justify-content: space-between; font-size: 11px; color: #666; padding: 2px 0; }
 
     /* Position */
     .pos-badge { padding: 2px 8px; border-radius: 4px; font-size: 11px; color: #fff; }
@@ -121,16 +123,10 @@
     <!-- 订单簿深度 -->
     <div class="card">
       <div class="bold sm term" style="margin-bottom:8px">订单簿<span class="term-tip">显示当前所有挂单。买盘(Bid)=想做多的人出的价，卖盘(Ask)=想做空的人出的价。你下市价单时，会按照订单簿中最优价格成交</span></div>
-      <div class="flex gap8">
-        <div class="flex1">
-          <div class="muted sm term" style="margin-bottom:4px">买盘 Bid<span class="term-tip">买方挂单，价格从高到低排列。最高买价=最可能成交的买单。你下市价空单时，会与最高买价成交</span></div>
-          <div id="depth-bids"></div>
-        </div>
-        <div class="flex1">
-          <div class="muted sm term" style="margin-bottom:4px">卖盘 Ask<span class="term-tip">卖方挂单，价格从低到高排列。最低卖价=最可能成交的卖单。你下市价多单时，会与最低卖价成交</span></div>
-          <div id="depth-asks"></div>
-        </div>
-      </div>
+      <div class="depth-header"><span>价格</span><span>数量</span></div>
+      <div id="depth-asks"></div>
+      <div class="depth-spread" id="depth-spread">--</div>
+      <div id="depth-bids"></div>
     </div>
 
     <div class="card">
@@ -515,10 +511,16 @@ async function loadMarket() {
 
     // Depth
     let bidsHtml = '', asksHtml = ''
+    // Asks: reverse so highest price is at top, lowest near spread
+    depth.asks.slice().reverse().forEach(a => { asksHtml += `<div class="depth-row"><span class="down">${parseFloat(a.price).toFixed(1)}</span><span>${parseFloat(a.quantity).toFixed(3)}</span></div>` })
     depth.bids.forEach(b => { bidsHtml += `<div class="depth-row"><span class="up">${parseFloat(b.price).toFixed(1)}</span><span>${parseFloat(b.quantity).toFixed(3)}</span></div>` })
-    depth.asks.forEach(a => { asksHtml += `<div class="depth-row"><span class="down">${parseFloat(a.price).toFixed(1)}</span><span>${parseFloat(a.quantity).toFixed(3)}</span></div>` })
-    document.getElementById('depth-bids').innerHTML = bidsHtml || '<span class="muted sm">--</span>'
     document.getElementById('depth-asks').innerHTML = asksHtml || '<span class="muted sm">--</span>'
+    // Spread = best ask - best bid
+    const bestAsk = depth.asks.length > 0 ? parseFloat(depth.asks[0].price) : 0
+    const bestBid = depth.bids.length > 0 ? parseFloat(depth.bids[0].price) : 0
+    const spread = bestAsk && bestBid ? (bestAsk - bestBid).toFixed(1) : '--'
+    document.getElementById('depth-spread').innerHTML = `<span class="muted sm">价差</span> ${spread}`
+    document.getElementById('depth-bids').innerHTML = bidsHtml || '<span class="muted sm">--</span>'
   } catch(e) { console.error('loadMarket:', e) }
 }
 

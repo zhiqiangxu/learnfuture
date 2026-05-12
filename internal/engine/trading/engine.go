@@ -232,11 +232,12 @@ func (e *Engine) PlaceLimitOrder(userID int64, side, leverage int, margin, limit
 	}
 
 	currentPrice := e.priceCache.GetPrice()
-	if !currentPrice.IsZero() {
-		deviation := limitPrice.Sub(currentPrice).Abs().Div(currentPrice)
-		if deviation.GreaterThan(e.maxPriceDeviation) {
-			return nil, ErrPriceDeviationTooLarge
-		}
+	if currentPrice.IsZero() {
+		return nil, ErrNoPriceAvailable
+	}
+	deviation := limitPrice.Sub(currentPrice).Abs().Div(currentPrice)
+	if deviation.GreaterThan(e.maxPriceDeviation) {
+		return nil, ErrPriceDeviationTooLarge
 	}
 
 	quantity := position.CalcQuantity(margin, leverage, limitPrice)
@@ -390,42 +391,6 @@ func (e *Engine) ClosePositionInternal(positionID int64, closePrice decimal.Deci
 	// --- UNIFIED: processTrades handles both sides ---
 	takerResults := e.ProcessTrades(obTrades, pos.UserID, -pos.Side, pos.Leverage)
 	return e.buildCloseResult(takerResults, pos)
-}
-
-// ============================================================
-// FillLimitOrder (called by Monitor)
-// ============================================================
-func (e *Engine) FillLimitOrder(cachedOrder *cache.CachedOrder) (*PlaceOrderResult, error) {
-	fillPrice := cachedOrder.Price
-	margin := cachedOrder.MarginCost
-	leverage := cachedOrder.Leverage
-	side := cachedOrder.Side
-	quantity := cachedOrder.Quantity
-
-	// Unfreeze margin — updatePosition will handle the actual deduction
-	positionValue := margin.Mul(decimal.NewFromInt(int64(leverage)))
-	fee, _ := e.clearance.CalcMakerFee(positionValue)
-	totalFrozen := margin.Add(fee)
-	e.memAccounts.Unfreeze(cachedOrder.UserID, totalFrozen)
-
-	// Synthetic trade for processTrades (limit order was triggered, not matched via orderbook now)
-	syntheticTrade := &orderbook.Trade{Price: fillPrice, Quantity: quantity}
-	if side == 1 {
-		syntheticTrade.BuyUserID = cachedOrder.UserID
-		syntheticTrade.SellUserID = 0
-	} else {
-		syntheticTrade.SellUserID = cachedOrder.UserID
-		syntheticTrade.BuyUserID = 0
-	}
-
-	e.orderCache.Remove(cachedOrder.ID)
-	takerResults := e.ProcessTrades([]*orderbook.Trade{syntheticTrade}, cachedOrder.UserID, side, leverage)
-
-	var resultFee decimal.Decimal
-	if len(takerResults) > 0 {
-		resultFee = takerResults[0].Fee
-	}
-	return &PlaceOrderResult{Status: "filled", AvgPrice: fillPrice, TotalQty: quantity, Fee: resultFee}, nil
 }
 
 // ============================================================
