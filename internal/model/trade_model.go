@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	CloseReasonManual      = 0
+	CloseReasonManual      = 0 // normal close: user-initiated or orderbook matching
 	CloseReasonTakeProfit  = 1
 	CloseReasonStopLoss    = 2
 	CloseReasonLiquidation = 3

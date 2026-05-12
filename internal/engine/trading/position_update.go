@@ -35,6 +35,10 @@ type PositionUpdateResult struct {
 // It handles all cases: new open, increase, reduce, close, and flip.
 // Both the taker and maker side of every trade go through this same function.
 //
+// closeReason is only used when the trade reduces/closes an existing position.
+// For normal matching (ProcessTrades), pass CloseReasonManual.
+// For system-triggered closes, pass the specific reason (Liquidation, ADL, etc.).
+//
 // NOTE: Memory is updated first, DB async via Settler. If process crashes between
 // memory update and DB write, state will be inconsistent on restart (DB lags behind).
 // This is a known trade-off for low-latency matching. Future: use Raft for replication.
