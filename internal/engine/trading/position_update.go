@@ -191,6 +191,12 @@ func (e *Engine) handleReduce(userID int64, existing *cache.CachedPosition, trad
 	if closeReason == 0 {
 		closeReason = model.CloseReasonManual
 	}
+	closeOrder := &model.Order{
+		UserID: userID, Symbol: "BTCUSDT", Side: tradeSide,
+		OrderType: model.OrderTypeMarket, Leverage: existing.Leverage,
+		Quantity: closeQty, MarginCost: decimal.Zero, Status: model.OrderStatusFilled,
+	}
+	closeOrder.FilledPrice = &price
 	closeTrade := &model.Trade{
 		UserID: userID, Symbol: "BTCUSDT", Side: tradeSide,
 		Price: price, Quantity: closeQty,
@@ -200,7 +206,7 @@ func (e *Engine) handleReduce(userID int64, existing *cache.CachedPosition, trad
 	closeTrade.PositionID = &posID
 
 	e.settler.Submit(&clearing.SettleEvent{
-		Type: clearing.EventClosePosition, Trade: closeTrade,
+		Type: clearing.EventClosePosition, Order: closeOrder, Trade: closeTrade,
 		PositionID: existing.ID, UserID: userID, CloseReason: closeReason,
 		ClosePrice: price, Margin: closeMargin, RealizedPnl: realizedPnl,
 		Fee: closeFee, NetPnl: netPnl,

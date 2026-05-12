@@ -238,6 +238,9 @@ func (s *Settler) settleClose(evt *SettleEvent) {
 			}
 		}
 		if evt.Trade != nil {
+			if evt.Order != nil && evt.Order.ID > 0 {
+				evt.Trade.OrderID = evt.Order.ID
+			}
 			if err := s.tradeModel.CreateTx(tx, evt.Trade); err != nil {
 				return fmt.Errorf("persist close trade: %w", err)
 			}
