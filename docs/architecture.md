@@ -213,10 +213,11 @@ wss://domain/ws?token=<jwt>
 
 推送消息类型:
 - ticker: 实时行情
-- position_pnl: 持仓盈亏更新
-- order_filled: 订单成交
+- position_pnl: 持仓盈亏更新 (每次价格变化)
+- order_filled: 订单成交 (maker 限价单被吃时通知)
 - liquidated: 强平通知
 - force_tp: 强盈通知
+- adl: ADL 减仓通知
 - funding_settled: 资金费率结算
 ```
 
@@ -277,68 +278,75 @@ wss://domain/ws?token=<jwt>
     └──────────────────────────────────────────┘
 ```
 
-### 8.2 市价单撮合流程
+### 8.2 Order-First 架构
+
+一次用户操作 = 一个 Order，撮合产生 N 笔 Trade（一个价格档位一笔）。
+Order 在调用方创建（EventCreateOrder），Trade 在 UpdatePosition 中创建（EventTrade）。
+Order ID 由 book.NextOrderID() 统一分配，内存和 DB 共享同一套 ID。
 
 ```
-用户下单 → 参数校验 → 获取最新价格 → 计算仓位参数 → 资金划转 → 创建订单 → 创建仓位 → 成交记录
+数据流:
+  调用方 → 创建 Order (ID=book.NextOrderID()) → EventCreateOrder → settler 写 DB
+  调用方 → 订单簿撮合 → N 笔 orderbook.Trade
+  ProcessTrades → 对每笔 trade 调 UpdatePosition(orderID)
+    → handleOpen/Increase/Reduce → 创建 model.Trade(OrderID=orderID) → EventTrade → settler 写 DB
 
-详细步骤:
+ID 一致性:
+  orderbook.Order.ID = model.Order.ID = book.NextOrderID()
+  启动时从 DB MAX(id) 初始化，保证重启后不冲突
+
+系统用户 (UserID≤0, 做市商/强平引擎):
+  内存持仓正常维护，但跳过 DB trade 记录写入
+```
+
+### 8.3 市价单撮合流程
+
+```
 1. [校验] side ∈ {1,-1}, leverage ∈ [1,125], margin ≥ 1 USDT
 2. [取价] currentPrice = PriceCache.GetPrice() (必须非零)
-3. [计算]
-   - quantity = margin × leverage / currentPrice
-   - fee = margin × leverage × feeRate(0.04%)
-   - totalCost = margin + fee
-   - liqPrice = CalcLiquidationPrice(currentPrice, leverage, side)
-   - forceTpPrice = CalcForceTpPrice(currentPrice, leverage, side)
-4. [清结算-扣款] Account.balance -= totalCost (原子操作，余额不足则失败)
-5. [创建订单] Orders 表: status=filled, filled_price=currentPrice
-6. [创建仓位] Positions 表: status=active, 含强平价/强盈价
-7. [成交记录] Trades 表: is_close=false, fee=fee
-8. [更新缓存] PositionCache.Add()
-9. [返回] 订单信息 + 教学卡片
+3. [预检] 余额 ≥ margin + fee (乐观检查，真正扣款在 UpdatePosition)
+4. [创建 Order] orderID = book.NextOrderID(), submitOrder → EventCreateOrder
+5. [撮合] PlaceMarket → N 笔 orderbook.Trade
+6. [持仓变更] ProcessTrades(trades, userID, side, leverage, orderID)
+   - 第1笔 → handleOpen: 创建仓位 + trade(orderID)
+   - 第2~N笔 → handleIncrease: 加权均价合并 + trade(orderID)
+   - 对手方(maker): trade 引用 maker 的 orderbook order ID
+7. [返回] 仓位信息 + 教学卡片，跳转到持仓页
 ```
 
-### 8.3 限价单撮合流程
+### 8.4 限价单撮合流程
 
 ```
 挂单阶段:
-1. [校验] 同市价单 + limitPrice > 0
-2. [计算] quantity = margin × leverage / limitPrice
-3. [清结算-冻结] Account.balance -= totalCost, Account.frozen += totalCost
-4. [创建订单] Orders 表: status=pending, price=limitPrice
-5. [加入监控] OrderCache.Add()
+1. [校验] 同市价单 + limitPrice > 0 + 价格偏差 ≤ 10%
+2. [冻结] memAccounts.Freeze(totalCost)
+3. [创建 Order] orderID = obOrder.ID, submitOrder(status=pending) → EventCreateOrder
+4. [放入订单簿] book.PlaceLimit
+   - 价格交叉 → 立即成交 (走 taker 路径)
+   - 未交叉 → resting 在订单簿，加入 orderCache
 
-触发成交阶段 (由 Monitor.OnPriceUpdate 驱动):
-1. [检测] 多单: currentPrice ≤ limitPrice → 触发; 空单: currentPrice ≥ limitPrice → 触发
-2. [清结算-解冻扣款] Account.frozen -= totalCost, Account.balance -= totalCost
-3. [更新订单] status=filled, filled_price=limitPrice, position_id=新仓位ID
-4. [创建仓位/成交记录] 同市价单后续步骤
-5. [移除监控] OrderCache.Remove()
-6. [WS推送] order_filled 消息
+成交阶段 (由订单簿自动撮合，不由 Monitor 轮询):
+  做市商每500ms刷新报价 → 新单进入订单簿 → 价格交叉 → 撮合成交
+  → onTrades 回调 → ProcessTrades → maker 的 trade 引用已有 orderID
+  → WS 推送 order_filled 通知 maker
 ```
 
-### 8.4 平仓清结算流程
+### 8.5 平仓清结算流程
 
 ```
 1. [校验] 仓位存在 && status=active && 属于当前用户
-2. [取价] closePrice = PriceCache.GetPrice()
-3. [计算]
-   - closeFee = margin × leverage × feeRate
-   - rawPnl = (closePrice - entryPrice) × quantity × side
-   - realizedPnl = rawPnl - closeFee
-   - netPnl = realizedPnl + fundingPnl (累计资金费)
-4. [清结算-资金归还]
-   - 手动平仓/止盈/止损/强盈: Account.balance += margin + netPnl
-   - 强平: 保证金全部亏损, Account.total_pnl -= margin
-5. [更新仓位] status → closed/liquidated/force_tp, closed_at = NOW()
-6. [创建平仓订单] side = -原方向
-7. [成交记录] is_close=true, close_reason, realized_pnl
-8. [移除缓存] PositionCache.Remove()
-9. [WS推送] 根据 close_reason 推送不同消息
+2. [CAS] TrySetState(Closing) — 防止并发重复平仓
+3. [创建 Order] closeOrderID = book.NextOrderID(), submitOrder → EventCreateOrder
+4. [撮合] PlaceMarket(反向) → N 笔 trade
+5. [持仓变更] ProcessTrades → handleReduce
+   - 计算 PnL = (closePrice - entryPrice) × qty × side - fee + fundingPnl
+   - 内存: ReturnMarginWithPnl (退保证金+盈亏)
+   - settler: EventTrade (trade + position 状态 + balance 退还)
+   - 强平: 走 TakeOver (不走订单簿), 用户失去全部保证金
+6. [WS推送] 根据 close_reason 推送不同消息
 ```
 
-### 8.5 保证金账户模型
+### 8.6 保证金账户模型
 
 ```
 ┌──────────────────────────────────────┐
@@ -367,17 +375,20 @@ wss://domain/ws?token=<jwt>
 
 ### 8.6 风控引擎 (Monitor)
 
-Monitor 在每次价格更新时执行以下检查（优先级从高到低）：
+Monitor 在每次价格更新时基于持仓快照执行检查（优先级从高到低）。
+限价单通过订单簿自动撮合（做市商刷新报价时价格交叉触发），不由 Monitor 轮询。
+执行层通过 CAS（TrySetState）保证幂等性，防止并发重复操作。
 
 ```
-OnPriceUpdate(currentPrice):
-  1. 检查限价单触发 → FillLimitOrder()
+OnPriceUpdate(lastPrice):
+  1. 取快照: allPositions = positionCache.GetAll()
   2. 遍历所有活跃持仓:
-     a. 强平检查: marginRatio ≤ 0.5% → 强制平仓, 保证金归零
-     b. 强盈检查: 收益率 ≥ 500% → 强制止盈, 盈利入账
-     c. 止盈检查: currentPrice 穿过 TP 价 → 自动平仓
-     d. 止损检查: currentPrice 穿过 SL 价 → 自动平仓
-     e. 推送 PnL: 计算并推送实时未实现盈亏/保证金率/ROI
+     a. 强平检查 (用 markPrice): 保证金率 ≤ 0.5% → TakeOver (不走订单簿)
+     b. 强盈检查: 收益率 ≥ 500% → ClosePositionInternal (市价单走订单簿)
+     c. 止盈检查: lastPrice 穿过 TP 价 → ClosePositionInternal
+     d. 止损检查: lastPrice 穿过 SL 价 → ClosePositionInternal
+     e. 推送 PnL: 计算并推送实时未实现盈亏/保证金率/ROI/ADL灯
+  3. 强平引擎: OnTick 尝试处置接管的持仓 (IOC限价单)
 ```
 
 ### 8.7 PnL 计算公式
@@ -516,8 +527,9 @@ engine/markprice/engine.go
 engine/insurance/fund.go
 - Contribute(): 强平盈余存入基金
 - Cover(): 穿仓时基金承担损失
-- ProcessLiquidation(): 完整的强平清算流程
 - 初始资金: 100万虚拟 USDT
+
+强平清算由 trading/liquidation_engine.go 的 TakeOver + OnTick 处理
 ```
 
 ---
@@ -588,6 +600,34 @@ engine/fee/calculator.go
 
 ---
 
+## 8E. T+1 对账系统 (Reconciliation)
+
+### 检查项
+
+| 检查 | 说明 | 比较精度 |
+|------|------|---------|
+| 余额对账 | 内存余额 vs DB 余额 | 8 位小数 |
+| 持仓对账 | 内存活跃持仓 vs DB 活跃持仓 | 数量 + 存在性 |
+| 零和校验 | ∑多头数量 ≡ ∑空头数量 | 精确 |
+
+### 运行机制
+
+- 启动后 1 分钟首次运行，之后每天 UTC 04:00 运行
+- 发现差异时日志告警 + 邮件通知管理员
+- 只报警不自动修复
+
+### 实现
+
+```
+engine/reconcile/reconcile.go
+- checkBalances(): 逐用户比较内存 vs DB 余额
+- checkPositions(): 逐持仓比较内存 vs DB 数量
+- checkZeroSum(): 验证 ∑longs ≡ ∑shorts
+- sendAlert(): 差异邮件通知
+```
+
+---
+
 ## 9. 价格源架构
 
 ```
@@ -622,7 +662,7 @@ learn_future/
 │   │   ├── pricefeed/
 │   │   ├── trading/
 │   │   ├── position/manager.go
-│   │   ├── liquidation/engine.go
+│   │   ├── reconcile/reconcile.go
 │   │   └── funding/scheduler.go
 │   ├── cache/
 │   ├── tutorial/

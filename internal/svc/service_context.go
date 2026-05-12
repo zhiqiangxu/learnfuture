@@ -138,7 +138,21 @@ func NewServiceContext(c config.Config) *ServiceContext {
 	// Market maker bot — onTrades callback processes limit orders matched by MM quotes
 	mmBot := marketmaker.NewBot(ob, priceCache, marketmaker.DefaultConfig,
 		func(trades []*orderbook.Trade, makerUserID int64, makerSide int) {
-			tradingEngine.ProcessTrades(trades, makerUserID, makerSide, 1)
+			// MM is the taker here — create order for the MM's trades
+			orderID := ob.NextOrderID()
+			if len(trades) > 0 {
+				avgPrice, totalQty := clearing.CalcVWAP(trades)
+				mmOrder := &model.Order{
+					ID: orderID, UserID: makerUserID, Symbol: "BTCUSDT", Side: makerSide,
+					OrderType: model.OrderTypeMarket, Leverage: 1,
+					Quantity: totalQty, Status: model.OrderStatusFilled,
+				}
+				mmOrder.FilledPrice = &avgPrice
+				settler.Submit(&clearing.SettleEvent{
+					Type: clearing.EventCreateOrder, Order: mmOrder, UserID: makerUserID,
+				})
+			}
+			tradingEngine.ProcessTrades(trades, makerUserID, makerSide, 1, orderID)
 		},
 	)
 
@@ -343,7 +357,7 @@ func (svc *ServiceContext) LoadCachesFromDB() error {
 	}
 	log.Printf("[Cache] loaded %d account balances to memory", accountCount)
 
-	// Initialize nextPosID from DB max to avoid ID collision after restart
+	// Initialize ID counters from DB max to avoid collision after restart
 	var maxPosID int64
 	err = svc.DB.QueryRow(`SELECT COALESCE(MAX(id), 0) FROM positions`).Scan(&maxPosID)
 	if err != nil {
@@ -352,6 +366,16 @@ func (svc *ServiceContext) LoadCachesFromDB() error {
 	if maxPosID > 0 {
 		svc.TradingEngine.SetNextPosID(maxPosID)
 		log.Printf("[Cache] nextPosID initialized to %d", maxPosID)
+	}
+
+	var maxOrderID int64
+	err = svc.DB.QueryRow(`SELECT COALESCE(MAX(id), 0) FROM orders`).Scan(&maxOrderID)
+	if err != nil {
+		return err
+	}
+	if maxOrderID > 0 {
+		svc.OrderBook.SetNextID(maxOrderID)
+		log.Printf("[Cache] nextOrderID initialized to %d", maxOrderID)
 	}
 
 	return nil

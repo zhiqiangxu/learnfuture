@@ -46,6 +46,15 @@ func NewOrderModel(db *sql.DB) *OrderModel {
 func (m *OrderModel) Create(o *Order) error { return m.CreateTx(m.db, o) }
 
 func (m *OrderModel) CreateTx(db Executor, o *Order) error {
+	if o.ID > 0 {
+		// Pre-assigned ID (from book.NextOrderID)
+		return db.QueryRow(
+			`INSERT INTO orders (id, user_id, symbol, side, order_type, leverage, price, quantity, filled_price, margin_cost, take_profit, stop_loss, status)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+			 RETURNING created_at, updated_at`,
+			o.ID, o.UserID, o.Symbol, o.Side, o.OrderType, o.Leverage, o.Price, o.Quantity, o.FilledPrice, o.MarginCost, o.TakeProfit, o.StopLoss, o.Status,
+		).Scan(&o.CreatedAt, &o.UpdatedAt)
+	}
 	return db.QueryRow(
 		`INSERT INTO orders (user_id, symbol, side, order_type, leverage, price, quantity, margin_cost, take_profit, stop_loss, status)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)

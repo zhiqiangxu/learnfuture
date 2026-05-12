@@ -7,6 +7,7 @@ import (
 
 	"learn_future/internal/cache"
 	"learn_future/internal/engine/adl"
+	"learn_future/internal/engine/clearing"
 	"learn_future/internal/engine/insurance"
 	"learn_future/internal/engine/markprice"
 	"learn_future/internal/engine/position"
@@ -289,7 +290,18 @@ func (m *Monitor) triggerADL(liquidatedSide int, deficit, bankruptcyPrice, curre
 		// Directly reduce counterparty's position via updatePosition — NO order book
 		// The counterparty's trade side is opposite to their position (selling to close a long, etc.)
 		closeSide := -targetSide // if target is short, close side is buy (1)
-		result := m.engine.UpdatePosition(r.UserID, closeSide, r.ReducedQty, r.SettlementPrice, 1, false, model.CloseReasonADL)
+		adlOrderID := m.engine.GetBook().NextOrderID()
+		adlOrder := &model.Order{
+			ID: adlOrderID, UserID: r.UserID, Symbol: "BTCUSDT", Side: closeSide,
+			OrderType: model.OrderTypeMarket, Leverage: 1,
+			Quantity: r.ReducedQty, MarginCost: decimal.Zero, Status: model.OrderStatusFilled,
+		}
+		sp := r.SettlementPrice
+		adlOrder.FilledPrice = &sp
+		m.engine.GetSettler().Submit(&clearing.SettleEvent{
+			Type: clearing.EventCreateOrder, Order: adlOrder, UserID: r.UserID,
+		})
+		result := m.engine.UpdatePosition(r.UserID, closeSide, r.ReducedQty, r.SettlementPrice, 1, false, model.CloseReasonADL, adlOrderID)
 		if result == nil {
 			log.Printf("[Monitor] ADL: failed to update position for user %d", r.UserID)
 			continue

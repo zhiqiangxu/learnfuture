@@ -56,6 +56,14 @@ func NewPositionModel(db *sql.DB) *PositionModel {
 func (m *PositionModel) Create(p *Position) error { return m.CreateTx(m.db, p) }
 
 func (m *PositionModel) CreateTx(db Executor, p *Position) error {
+	if p.ID > 0 {
+		return db.QueryRow(
+			`INSERT INTO positions (id, user_id, symbol, side, margin_mode, leverage, entry_price, quantity, margin, liq_price, force_tp_price, take_profit, stop_loss)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+			 RETURNING created_at, updated_at, opened_at`,
+			p.ID, p.UserID, p.Symbol, p.Side, p.MarginMode, p.Leverage, p.EntryPrice, p.Quantity, p.Margin, p.LiqPrice, p.ForceTpPrice, p.TakeProfit, p.StopLoss,
+		).Scan(&p.CreatedAt, &p.UpdatedAt, &p.OpenedAt)
+	}
 	return db.QueryRow(
 		`INSERT INTO positions (user_id, symbol, side, leverage, entry_price, quantity, margin, liq_price, force_tp_price, take_profit, stop_loss)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)

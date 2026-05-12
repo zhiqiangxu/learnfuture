@@ -134,6 +134,7 @@ func NewEngine(
 func (e *Engine) GetMemAccounts() *cache.AccountCache  { return e.memAccounts }
 func (e *Engine) SetOnMakerFill(cb MakerFillCallback)  { e.onMakerFill = cb }
 func (e *Engine) SetNextPosID(id int64)                { e.nextPosID.Store(id) }
+func (e *Engine) GetSettler() *clearing.Settler         { return e.settler }
 // WithLock executes fn while holding the engine mutex. Use for operations
 // that need to be atomic with position/account state (e.g., funding settlement).
 func (e *Engine) WithLock(fn func())                    { e.mu.Lock(); defer e.mu.Unlock(); fn() }
@@ -169,20 +170,24 @@ func (e *Engine) PlaceMarketOrder(userID int64, side, leverage, marginMode int, 
 		return nil, model.ErrInsufficientBalance
 	}
 
-	// --- MATCHING ---
+	// --- CREATE ORDER ---
 	estimatedQty := position.CalcQuantity(margin, leverage, refPrice)
+	orderID := e.book.NextOrderID()
+
+	// --- MATCHING ---
 	obTrades, _ := e.book.PlaceMarket(&orderbook.Order{
-		ID: e.book.NextOrderID(), UserID: userID, Side: side, Quantity: estimatedQty,
+		ID: orderID, UserID: userID, Side: side, Quantity: estimatedQty,
 	})
 	if len(obTrades) == 0 {
 		return nil, ErrNoLiquidity
 	}
 
-	// --- UNIFIED POSITION UPDATE (both sides) ---
-	takerResults := e.ProcessTrades(obTrades, userID, side, leverage)
+	// --- PERSIST ORDER + PROCESS TRADES ---
+	avgPrice, totalQty := clearing.CalcVWAP(obTrades)
+	e.submitOrder(orderID, userID, side, model.OrderTypeMarket, leverage, nil, totalQty, margin, avgPrice, tp, sl, model.OrderStatusFilled)
+	takerResults := e.ProcessTrades(obTrades, userID, side, leverage, orderID)
 
 	// --- BUILD RESPONSE ---
-	avgPrice, totalQty := clearing.CalcVWAP(obTrades)
 	var pos *model.Position
 	var resultFee decimal.Decimal
 	if len(takerResults) > 0 {
@@ -259,9 +264,10 @@ func (e *Engine) PlaceLimitOrder(userID int64, side, leverage int, margin, limit
 
 	if len(obTrades) > 0 && remaining == nil {
 		// Crossed spread → immediate fill as taker
-		e.memAccounts.Unfreeze(userID, totalCost) // release frozen, updatePosition will deduct
-		takerResults := e.ProcessTrades(obTrades, userID, side, leverage)
+		e.memAccounts.Unfreeze(userID, totalCost)
 		avgPrice, totalQty := clearing.CalcVWAP(obTrades)
+		e.submitOrder(obOrder.ID, userID, side, model.OrderTypeLimit, leverage, &limitPrice, totalQty, margin, avgPrice, tp, sl, model.OrderStatusFilled)
+		takerResults := e.ProcessTrades(obTrades, userID, side, leverage, obOrder.ID)
 
 		var resultFee decimal.Decimal
 		for _, tr := range takerResults {
@@ -274,23 +280,14 @@ func (e *Engine) PlaceLimitOrder(userID int64, side, leverage int, margin, limit
 	}
 
 	// Resting in book
-	order := &model.Order{
-		UserID: userID, Symbol: "BTCUSDT", Side: side,
-		OrderType: model.OrderTypeLimit, Leverage: leverage,
-		Price: &limitPrice, Quantity: quantity, MarginCost: margin,
-		TakeProfit: tp, StopLoss: sl, Status: model.OrderStatusPending,
-	}
+	e.submitOrder(obOrder.ID, userID, side, model.OrderTypeLimit, leverage, &limitPrice, quantity, margin, decimal.Zero, tp, sl, model.OrderStatusPending)
 	e.orderCache.Add(&cache.CachedOrder{
 		ID: obOrder.ID, UserID: userID, Side: side,
 		Price: limitPrice, Quantity: quantity, MarginCost: margin,
 		Leverage: leverage,
 		TakeProfit: decimalPtrToString(tp), StopLoss: decimalPtrToString(sl),
 	})
-	e.settler.Submit(&clearing.SettleEvent{
-		Type: clearing.EventOpenPosition, Order: order,
-		UserID: userID, BalanceDelta: totalCost.Neg(), FrozenDelta: totalCost,
-	})
-	return &PlaceOrderResult{Order: order, Status: "pending"}, nil
+	return &PlaceOrderResult{Status: "pending"}, nil
 }
 
 // ============================================================
@@ -336,27 +333,27 @@ func (e *Engine) ClosePosition(positionID, userID int64, closeReason int, closeQ
 	actualQty := pos.Quantity
 	if !closeQty.IsZero() { actualQty = closeQty }
 
+	orderID := e.book.NextOrderID()
 	obTrades, _ := e.book.PlaceMarket(&orderbook.Order{
-		ID: e.book.NextOrderID(), UserID: userID, Side: -pos.Side, Quantity: actualQty,
+		ID: orderID, UserID: userID, Side: -pos.Side, Quantity: actualQty,
 	})
 	if len(obTrades) == 0 {
 		e.positionCache.Update(positionID, func(p *cache.CachedPosition) { p.State.Store(cache.PosStateActive) })
 		return nil, ErrNoLiquidity
 	}
 
-	// Reset to Active so updatePosition's FindByUserSide can find it
 	e.positionCache.Update(positionID, func(p *cache.CachedPosition) { p.State.Store(cache.PosStateActive) })
 
-	// --- UNIFIED: processTrades handles both sides ---
-	takerResults := e.ProcessTrades(obTrades, userID, -pos.Side, pos.Leverage)
+	avgPrice, totalQty := clearing.CalcVWAP(obTrades)
+	e.submitOrder(orderID, userID, -pos.Side, model.OrderTypeMarket, pos.Leverage, nil, totalQty, decimal.Zero, avgPrice, nil, nil, model.OrderStatusFilled)
+	takerResults := e.ProcessTrades(obTrades, userID, -pos.Side, pos.Leverage, orderID)
 	return e.buildCloseResult(takerResults, pos)
 }
 
 // ============================================================
-// ClosePositionInternal (risk engine auto-close) — pure memory, no DB read
+// ClosePositionInternal (risk engine auto-close)
 // ============================================================
 func (e *Engine) ClosePositionInternal(positionID int64, closePrice decimal.Decimal, closeReason int) (*CloseResult, error) {
-	// Liquidation and ADL bypass orderbook — they should not go through this function
 	if closeReason == model.CloseReasonLiquidation || closeReason == model.CloseReasonADL {
 		return nil, fmt.Errorf("ClosePositionInternal called with reason=%d, should use TakeOver/UpdatePosition", closeReason)
 	}
@@ -378,19 +375,20 @@ func (e *Engine) ClosePositionInternal(positionID int64, closePrice decimal.Deci
 	}
 	pos := cachedToModel(cp)
 
+	orderID := e.book.NextOrderID()
 	obTrades, _ := e.book.PlaceMarket(&orderbook.Order{
-		ID: e.book.NextOrderID(), UserID: pos.UserID, Side: -pos.Side, Quantity: pos.Quantity,
+		ID: orderID, UserID: pos.UserID, Side: -pos.Side, Quantity: pos.Quantity,
 	})
 	if len(obTrades) == 0 {
 		e.positionCache.Update(positionID, func(p *cache.CachedPosition) { p.State.Store(cache.PosStateActive) })
 		return nil, ErrNoLiquidity
 	}
 
-	// Reset to Active so updatePosition's FindByUserSide can find it
 	e.positionCache.Update(positionID, func(p *cache.CachedPosition) { p.State.Store(cache.PosStateActive) })
 
-	// --- UNIFIED: processTrades handles both sides ---
-	takerResults := e.ProcessTrades(obTrades, pos.UserID, -pos.Side, pos.Leverage)
+	avgPrice, totalQty := clearing.CalcVWAP(obTrades)
+	e.submitOrder(orderID, pos.UserID, -pos.Side, model.OrderTypeMarket, pos.Leverage, nil, totalQty, decimal.Zero, avgPrice, nil, nil, model.OrderStatusFilled)
+	takerResults := e.ProcessTrades(obTrades, pos.UserID, -pos.Side, pos.Leverage, orderID)
 	return e.buildCloseResult(takerResults, pos)
 }
 
@@ -450,19 +448,56 @@ func (e *Engine) buildCloseResult(results []*PositionUpdateResult, pos *model.Po
 	}, nil
 }
 
+// submitOrder creates a model.Order and submits EventCreateOrder to settler.
+// Called once per user action (open/close/liquidation/ADL).
+func (e *Engine) submitOrder(id, userID int64, side, orderType, leverage int, price *decimal.Decimal, qty, marginCost, filledPrice decimal.Decimal, tp, sl *decimal.Decimal, status int) {
+	order := &model.Order{
+		ID: id, UserID: userID, Symbol: "BTCUSDT", Side: side,
+		OrderType: orderType, Leverage: leverage, Price: price,
+		Quantity: qty, MarginCost: marginCost, Status: status,
+		TakeProfit: tp, StopLoss: sl,
+	}
+	if !filledPrice.IsZero() {
+		order.FilledPrice = &filledPrice
+	}
+	evt := &clearing.SettleEvent{Type: clearing.EventCreateOrder, Order: order, UserID: userID}
+	// For resting limit orders: freeze balance
+	if status == model.OrderStatusPending {
+		totalCost := marginCost.Add(marginCost.Mul(decimal.NewFromInt(int64(leverage))).Mul(e.clearance.GetMaintRate()))
+		// Balance freeze is already done in memAccounts.Freeze, settler just records it
+		positionValue := marginCost.Mul(decimal.NewFromInt(int64(leverage)))
+		fee, _ := e.clearance.CalcMakerFee(positionValue)
+		frozen := marginCost.Add(fee)
+		evt.BalanceDelta = frozen.Neg()
+		evt.FrozenDelta = frozen
+		_ = totalCost
+	}
+	e.settler.Submit(evt)
+}
+
 func decimalPtrToString(d *decimal.Decimal) string {
 	if d == nil { return "" }
 	return d.String()
 }
 
 // ProcessTrades handles BOTH sides of every trade using the unified updatePosition.
-// This is the single entry point for all position changes after orderbook matching.
-func (e *Engine) ProcessTrades(trades []*orderbook.Trade, takerUserID int64, takerSide int, takerLeverage int) []*PositionUpdateResult {
+// takerOrderID is the pre-assigned order ID for the taker side (already submitted via EventCreateOrder).
+// Maker side uses the orderbook order ID from the trade (already in DB if resting limit order).
+func (e *Engine) ProcessTrades(trades []*orderbook.Trade, takerUserID int64, takerSide int, takerLeverage int, takerOrderID int64) []*PositionUpdateResult {
 	var takerResults []*PositionUpdateResult
 	for _, t := range trades {
+		// Resolve order IDs: taker uses takerOrderID, maker uses their own orderbook order ID
+		buyerOrderID, sellerOrderID := t.BuyOrderID, t.SellOrderID
+		if t.BuyUserID == takerUserID {
+			buyerOrderID = takerOrderID
+		}
+		if t.SellUserID == takerUserID {
+			sellerOrderID = takerOrderID
+		}
+
 		// Process buyer
 		buyerLeverage, buyerIsMaker := e.resolveLeverage(t.BuyUserID, t.BuyOrderID, takerUserID, takerLeverage)
-		r := e.UpdatePosition(t.BuyUserID, 1, t.Quantity, t.Price, buyerLeverage, buyerIsMaker, model.CloseReasonManual)
+		r := e.UpdatePosition(t.BuyUserID, 1, t.Quantity, t.Price, buyerLeverage, buyerIsMaker, model.CloseReasonManual, buyerOrderID)
 		if r != nil {
 			if t.BuyUserID == takerUserID {
 				takerResults = append(takerResults, r)
@@ -473,7 +508,7 @@ func (e *Engine) ProcessTrades(trades []*orderbook.Trade, takerUserID int64, tak
 
 		// Process seller
 		sellerLeverage, sellerIsMaker := e.resolveLeverage(t.SellUserID, t.SellOrderID, takerUserID, takerLeverage)
-		r = e.UpdatePosition(t.SellUserID, -1, t.Quantity, t.Price, sellerLeverage, sellerIsMaker, model.CloseReasonManual)
+		r = e.UpdatePosition(t.SellUserID, -1, t.Quantity, t.Price, sellerLeverage, sellerIsMaker, model.CloseReasonManual, sellerOrderID)
 		if r != nil {
 			if t.SellUserID == takerUserID {
 				takerResults = append(takerResults, r)

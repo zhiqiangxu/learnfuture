@@ -31,37 +31,32 @@ type PositionUpdateResult struct {
 	IsPartial   bool
 }
 
-// UpdatePosition is the unified position update function (exported for Monitor/ADL).
-// It handles all cases: new open, increase, reduce, close, and flip.
-// Both the taker and maker side of every trade go through this same function.
+// UpdatePosition is the unified position update function.
+// orderID is the pre-assigned order ID from book.NextOrderID(). All trades created
+// by this call reference this orderID. The order itself is written to DB by a
+// separate EventCreateOrder event submitted by the caller.
 //
 // closeReason is only used when the trade reduces/closes an existing position.
 // For normal matching (ProcessTrades), pass CloseReasonManual.
 // For system-triggered closes, pass the specific reason (Liquidation, ADL, etc.).
-//
-// NOTE: Memory is updated first, DB async via Settler. If process crashes between
-// memory update and DB write, state will be inconsistent on restart (DB lags behind).
-// This is a known trade-off for low-latency matching. Future: use Raft for replication.
-func (e *Engine) UpdatePosition(userID int64, tradeSide int, qty, price decimal.Decimal, leverage int, isMaker bool, closeReason int) *PositionUpdateResult {
+func (e *Engine) UpdatePosition(userID int64, tradeSide int, qty, price decimal.Decimal, leverage int, isMaker bool, closeReason int, orderID int64) *PositionUpdateResult {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	// Find existing position in the opposite direction (would be reduced/closed)
 	opposite := e.positionCache.FindByUserSide(userID, -tradeSide)
-	// Find existing position in the same direction (would be increased)
 	sameDir := e.positionCache.FindByUserSide(userID, tradeSide)
 
 	if opposite != nil {
-		return e.handleReduce(userID, opposite, tradeSide, qty, price, leverage, closeReason)
+		return e.handleReduce(userID, opposite, tradeSide, qty, price, leverage, closeReason, orderID)
 	} else if sameDir != nil {
-		return e.handleIncrease(userID, sameDir, qty, price)
+		return e.handleIncrease(userID, sameDir, qty, price, orderID)
 	} else {
-		return e.handleOpen(userID, tradeSide, qty, price, leverage, isMaker)
+		return e.handleOpen(userID, tradeSide, qty, price, leverage, isMaker, orderID)
 	}
 }
 
 // handleOpen creates a new position.
-func (e *Engine) handleOpen(userID int64, side int, qty, price decimal.Decimal, leverage int, isMaker bool) *PositionUpdateResult {
+func (e *Engine) handleOpen(userID int64, side int, qty, price decimal.Decimal, leverage int, isMaker bool, orderID int64) *PositionUpdateResult {
 	if leverage <= 0 {
 		leverage = 1
 	}
@@ -82,28 +77,25 @@ func (e *Engine) handleOpen(userID int64, side int, qty, price decimal.Decimal, 
 		liqPrice.String(), ftpPrice.String(), "", "", "",
 	))
 
-	// Async DB persistence
 	pos := &model.Position{
+		ID: posID, // pre-assigned ID, same as cache
 		UserID: userID, Symbol: "BTCUSDT", Side: side,
 		MarginMode: model.MarginModeIsolated, Leverage: leverage,
 		EntryPrice: price, Quantity: qty, Margin: margin,
 		LiqPrice: liqPrice, ForceTpPrice: ftpPrice,
 		Status: model.PositionStatusActive,
 	}
-	order := &model.Order{
-		UserID: userID, Symbol: "BTCUSDT", Side: side,
-		OrderType: model.OrderTypeMarket, Leverage: leverage,
-		Quantity: qty, MarginCost: margin, Status: model.OrderStatusFilled,
+	// Skip DB persistence for system users (market maker, liquidation engine)
+	if userID > 0 {
+		trade := &model.Trade{
+			UserID: userID, OrderID: orderID, Symbol: "BTCUSDT", Side: side,
+			Price: price, Quantity: qty, Fee: fee, IsClose: false,
+		}
+		e.settler.Submit(&clearing.SettleEvent{
+			Type: clearing.EventTrade, Position: pos, Trade: trade,
+			UserID: userID, BalanceDelta: totalCost.Neg(),
+		})
 	}
-	order.FilledPrice = &price
-	trade := &model.Trade{
-		UserID: userID, Symbol: "BTCUSDT", Side: side,
-		Price: price, Quantity: qty, Fee: fee, IsClose: false,
-	}
-	e.settler.Submit(&clearing.SettleEvent{
-		Type: clearing.EventOpenPosition, Order: order, Position: pos, Trade: trade,
-		UserID: userID, BalanceDelta: totalCost.Neg(),
-	})
 
 	log.Printf("[UpdatePosition] user %d opened %s %s @ %s, margin=%s",
 		userID, sideStr(side), qty, price.StringFixed(2), margin.StringFixed(2))
@@ -116,7 +108,7 @@ func (e *Engine) handleOpen(userID int64, side int, qty, price decimal.Decimal, 
 }
 
 // handleIncrease adds to an existing same-direction position (weighted average entry price).
-func (e *Engine) handleIncrease(userID int64, existing *cache.CachedPosition, qty, price decimal.Decimal) *PositionUpdateResult {
+func (e *Engine) handleIncrease(userID int64, existing *cache.CachedPosition, qty, price decimal.Decimal, orderID int64) *PositionUpdateResult {
 	oldQty, _ := decimal.NewFromString(existing.Quantity)
 	oldEntry, _ := decimal.NewFromString(existing.EntryPrice)
 	oldMargin, _ := decimal.NewFromString(existing.Margin)
@@ -139,10 +131,18 @@ func (e *Engine) handleIncrease(userID int64, existing *cache.CachedPosition, qt
 		cp.ForceTpPrice = newFtpPrice.String()
 	})
 
-	e.settler.Submit(&clearing.SettleEvent{
-		Type: clearing.EventBalanceUpdate, UserID: userID,
-		BalanceDelta: addMargin.Neg(), FrozenDelta: decimal.Zero,
-	})
+	if userID > 0 {
+		posID := existing.ID
+		trade := &model.Trade{
+			UserID: userID, OrderID: orderID, Symbol: "BTCUSDT", Side: existing.Side,
+			Price: price, Quantity: qty, IsClose: false,
+		}
+		trade.PositionID = &posID
+		e.settler.Submit(&clearing.SettleEvent{
+			Type: clearing.EventTrade, Trade: trade,
+			UserID: userID, BalanceDelta: addMargin.Neg(),
+		})
+	}
 
 	log.Printf("[UpdatePosition] user %d increased position %d, qty=%s→%s, entry=%s→%s",
 		userID, existing.ID, oldQty, newQty, oldEntry.StringFixed(2), newEntry.StringFixed(2))
@@ -155,7 +155,7 @@ func (e *Engine) handleIncrease(userID int64, existing *cache.CachedPosition, qt
 }
 
 // handleReduce reduces or closes an opposite-direction position, and opens remainder if qty exceeds.
-func (e *Engine) handleReduce(userID int64, existing *cache.CachedPosition, tradeSide int, qty, price decimal.Decimal, leverage int, closeReason int) *PositionUpdateResult {
+func (e *Engine) handleReduce(userID int64, existing *cache.CachedPosition, tradeSide int, qty, price decimal.Decimal, leverage int, closeReason int, orderID int64) *PositionUpdateResult {
 	existingQty, _ := decimal.NewFromString(existing.Quantity)
 	existingEntry, _ := decimal.NewFromString(existing.EntryPrice)
 	existingMargin, _ := decimal.NewFromString(existing.Margin)
@@ -165,7 +165,6 @@ func (e *Engine) handleReduce(userID int64, existing *cache.CachedPosition, trad
 	closeQty, closeMargin, closeFunding := cr.CloseQty, cr.CloseMargin, cr.CloseFunding
 	rawPnl, closeFee, realizedPnl, netPnl := cr.RawPnl, cr.Fee, cr.RealizedPnl, cr.NetPnl
 
-	// Return margin + PnL to account
 	if closeReason == model.CloseReasonLiquidation {
 		e.memAccounts.AddPnl(userID, closeMargin.Neg())
 	} else {
@@ -187,38 +186,38 @@ func (e *Engine) handleReduce(userID int64, existing *cache.CachedPosition, trad
 		log.Printf("[UpdatePosition] user %d reduced position %d by %s, remaining=%s", userID, existing.ID, closeQty, cr.RemainQty)
 	}
 
-	// Async DB persistence
 	if closeReason == 0 {
 		closeReason = model.CloseReasonManual
 	}
-	closeOrder := &model.Order{
-		UserID: userID, Symbol: "BTCUSDT", Side: tradeSide,
-		OrderType: model.OrderTypeMarket, Leverage: existing.Leverage,
-		Quantity: closeQty, MarginCost: decimal.Zero, Status: model.OrderStatusFilled,
-	}
-	closeOrder.FilledPrice = &price
-	closeTrade := &model.Trade{
-		UserID: userID, Symbol: "BTCUSDT", Side: tradeSide,
-		Price: price, Quantity: closeQty,
-		Fee: closeFee, RealizedPnl: realizedPnl, IsClose: true, CloseReason: closeReason,
-	}
-	posID := existing.ID
-	closeTrade.PositionID = &posID
+	if userID > 0 {
+		closeTrade := &model.Trade{
+			UserID: userID, OrderID: orderID, Symbol: "BTCUSDT", Side: tradeSide,
+			Price: price, Quantity: closeQty,
+			Fee: closeFee, RealizedPnl: realizedPnl, IsClose: true, CloseReason: closeReason,
+		}
+		posID := existing.ID
+		closeTrade.PositionID = &posID
 
-	e.settler.Submit(&clearing.SettleEvent{
-		Type: clearing.EventClosePosition, Order: closeOrder, Trade: closeTrade,
-		PositionID: existing.ID, UserID: userID, CloseReason: closeReason,
-		ClosePrice: price, Margin: closeMargin, RealizedPnl: realizedPnl,
-		Fee: closeFee, NetPnl: netPnl,
-		IsPartialClose: !cr.IsFullClose,
-		RemainingQty: cr.RemainQty,
-		RemainingMargin: cr.RemainMargin,
-	})
+		// Balance delta: margin returned + net PnL (or margin lost for liquidation)
+		balanceDelta := closeMargin.Add(netPnl)
+		if closeReason == model.CloseReasonLiquidation {
+			balanceDelta = closeMargin.Neg()
+		}
+		e.settler.Submit(&clearing.SettleEvent{
+			Type: clearing.EventTrade, Trade: closeTrade,
+			PositionID: existing.ID, UserID: userID, CloseReason: closeReason,
+			ClosePrice: price, Margin: closeMargin, RealizedPnl: realizedPnl,
+			Fee: closeFee, NetPnl: netPnl, BalanceDelta: balanceDelta,
+			IsPartialClose: !cr.IsFullClose,
+			RemainingQty: cr.RemainQty,
+			RemainingMargin: cr.RemainMargin,
+		})
+	}
 
 	// If qty exceeds existing position, open remainder in new direction
 	remainingTradeQty := qty.Sub(existingQty)
 	if remainingTradeQty.IsPositive() {
-		e.handleOpen(userID, tradeSide, remainingTradeQty, price, leverage, false)
+		e.handleOpen(userID, tradeSide, remainingTradeQty, price, leverage, false, orderID)
 	}
 
 	return &PositionUpdateResult{

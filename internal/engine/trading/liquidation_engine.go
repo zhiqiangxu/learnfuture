@@ -8,8 +8,10 @@ import (
 	"github.com/shopspring/decimal"
 
 	"learn_future/internal/cache"
+	"learn_future/internal/engine/clearing"
 	"learn_future/internal/engine/insurance"
 	"learn_future/internal/engine/orderbook"
+	"learn_future/internal/model"
 )
 
 // LiquidationUserID is the system account that holds positions taken over from liquidated users.
@@ -76,12 +78,24 @@ func (le *LiquidationEngine) TakeOver(pos *cache.CachedPosition, bankruptcyPrice
 		return
 	}
 
+	// Create liquidation order for the user
+	liqOrderID := le.book.NextOrderID()
+	liqOrder := &model.Order{
+		ID: liqOrderID, UserID: pos.UserID, Symbol: "BTCUSDT", Side: -pos.Side,
+		OrderType: model.OrderTypeMarket, Leverage: pos.Leverage,
+		Quantity: quantity, MarginCost: decimal.Zero, Status: model.OrderStatusFilled,
+	}
+	liqOrder.FilledPrice = &bankruptcyPrice
+	le.engine.settler.Submit(&clearing.SettleEvent{
+		Type: clearing.EventCreateOrder, Order: liqOrder, UserID: pos.UserID,
+	})
+
 	// ProcessTrades handles both sides:
 	// - User: opposite trade closes their position (at bankruptcy price, margin = 0)
 	// - LiquidationEngine: takes on the position
 	le.engine.ProcessTrades(
 		[]*orderbook.Trade{syntheticTrade},
-		pos.UserID, -pos.Side, pos.Leverage,
+		pos.UserID, -pos.Side, pos.Leverage, liqOrderID,
 	)
 
 	log.Printf("[LiquidationEngine] took over position from user %d: side=%d qty=%s at bankruptcy price %s",
@@ -144,7 +158,19 @@ func (le *LiquidationEngine) OnTick(midPrice decimal.Decimal) {
 		}
 
 		if len(trades) > 0 {
-			le.engine.ProcessTrades(trades, LiquidationUserID, closeSide, 1)
+			// Create disposal order
+			disposeOrder := &model.Order{
+				ID: orderID, UserID: LiquidationUserID, Symbol: "BTCUSDT", Side: closeSide,
+				OrderType: model.OrderTypeLimit, Leverage: 1,
+				Quantity: disposeQty, MarginCost: decimal.Zero, Status: model.OrderStatusFilled,
+			}
+			fp := limitPrice.Round(2)
+			disposeOrder.FilledPrice = &fp
+			disposeOrder.Price = &fp
+			le.engine.settler.Submit(&clearing.SettleEvent{
+				Type: clearing.EventCreateOrder, Order: disposeOrder, UserID: LiquidationUserID,
+			})
+			le.engine.ProcessTrades(trades, LiquidationUserID, closeSide, 1, orderID)
 
 			// Insurance fund: surplus/deficit = (disposal price - entry price) × qty × side
 			// Entry price = bankruptcy price (the price at which the engine took over)

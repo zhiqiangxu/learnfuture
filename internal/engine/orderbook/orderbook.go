@@ -63,6 +63,9 @@ func NewBook() *Book {
 	return b
 }
 
+// SetNextID initializes the ID counter (e.g., from DB max after restart).
+func (b *Book) SetNextID(id int64) { b.nextID.Store(id) }
+
 // NextOrderID returns a unique order ID.
 func (b *Book) NextOrderID() int64 {
 	return b.nextID.Add(1)

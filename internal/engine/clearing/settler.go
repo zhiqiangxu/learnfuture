@@ -15,46 +15,47 @@ import (
 type EventType int
 
 const (
-	EventOpenPosition EventType = iota
-	EventClosePosition
-	EventFillLimitOrder
-	EventCancelOrder
-	EventFundingSettle
-	EventBalanceUpdate
+	EventCreateOrder  EventType = iota // Write order to DB (once per user action)
+	EventTrade                         // Write trade + position changes + balance
+	EventCancelOrder                   // Cancel a pending order
+	EventFundingSettle                 // Funding rate settlement
+	EventBalanceUpdate                 // Balance adjustment (frozen/unfrozen)
 )
 
 // SettleEvent is the unit of work sent from matching to clearing.
 type SettleEvent struct {
 	Type      EventType
 	Timestamp time.Time
+	UserID    int64
 
-	// For EventOpenPosition
-	Order    *model.Order
-	Position *model.Position
+	// EventCreateOrder: write order to DB
+	Order *model.Order
+
+	// EventTrade: write trade + position changes
 	Trade    *model.Trade
+	Position *model.Position // non-nil for new position (open)
 
-	// For EventClosePosition
+	// Position close/reduce fields
 	PositionID      int64
-	UserID          int64
 	CloseReason     int
 	ClosePrice      decimal.Decimal
-	Margin          decimal.Decimal // position margin (returned or lost)
+	Margin          decimal.Decimal
 	RealizedPnl     decimal.Decimal
-	Fee             decimal.Decimal // trading fee
+	Fee             decimal.Decimal
 	NetPnl          decimal.Decimal
-	IsPartialClose  bool            // true = don't close position, just reduce
-	RemainingQty    decimal.Decimal // remaining quantity after partial close
-	RemainingMargin decimal.Decimal // remaining margin after partial close
+	IsPartialClose  bool
+	RemainingQty    decimal.Decimal
+	RemainingMargin decimal.Decimal
 
-	// For EventCancelOrder
+	// EventCancelOrder
 	OrderID int64
 
-	// For EventBalanceUpdate
+	// Balance
 	BalanceDelta decimal.Decimal
 	FrozenDelta  decimal.Decimal
 	PnlDelta     decimal.Decimal
 
-	// For EventFundingSettle
+	// EventFundingSettle
 	FundingSettlement *model.FundingSettlement
 	FundingPnlDelta   decimal.Decimal
 }
@@ -142,10 +143,10 @@ func (s *Settler) processLoop() {
 
 func (s *Settler) processEvent(evt *SettleEvent) {
 	switch evt.Type {
-	case EventOpenPosition:
-		s.settleOpen(evt)
-	case EventClosePosition:
-		s.settleClose(evt)
+	case EventCreateOrder:
+		s.settleCreateOrder(evt)
+	case EventTrade:
+		s.settleTrade(evt)
 	case EventCancelOrder:
 		s.settleCancelOrder(evt)
 	case EventBalanceUpdate:
@@ -153,112 +154,77 @@ func (s *Settler) processEvent(evt *SettleEvent) {
 	case EventFundingSettle:
 		s.settleFunding(evt)
 	}
-
-	// Mark WAL entries as committed after successful DB write
 }
 
-func (s *Settler) settleOpen(evt *SettleEvent) {
+// settleCreateOrder writes a new order to DB.
+func (s *Settler) settleCreateOrder(evt *SettleEvent) {
 	if err := s.execTx(func(tx *sql.Tx) error {
-		if evt.Order != nil {
-			if err := s.orderModel.CreateTx(tx, evt.Order); err != nil {
-				return fmt.Errorf("persist order: %w", err)
-			}
+		if err := s.orderModel.CreateTx(tx, evt.Order); err != nil {
+			return fmt.Errorf("create order: %w", err)
 		}
-		if evt.Position != nil {
-			if err := s.positionModel.CreateTx(tx, evt.Position); err != nil {
-				return fmt.Errorf("persist position: %w", err)
-			}
-			if evt.Order != nil && evt.Position.ID > 0 {
-				if err := s.orderModel.FillTx(tx, evt.Order.ID, evt.Position.EntryPrice, evt.Position.ID); err != nil {
-					return fmt.Errorf("fill order: %w", err)
-				}
-			}
-		}
-		if evt.Trade != nil {
-			if evt.Order != nil && evt.Order.ID > 0 {
-				evt.Trade.OrderID = evt.Order.ID
-			}
-			if evt.Position != nil && evt.Position.ID > 0 {
-				evt.Trade.PositionID = &evt.Position.ID
-			}
-			if err := s.tradeModel.CreateTx(tx, evt.Trade); err != nil {
-				return fmt.Errorf("persist trade: %w", err)
-			}
-		}
-		if evt.UserID > 0 && !evt.BalanceDelta.IsZero() {
+		// For resting limit orders: freeze balance
+		if evt.UserID > 0 && (!evt.BalanceDelta.IsZero() || !evt.FrozenDelta.IsZero()) {
 			if err := s.accountModel.UpdateBalanceTx(tx, evt.UserID, evt.BalanceDelta, evt.FrozenDelta); err != nil {
 				return fmt.Errorf("update balance: %w", err)
 			}
 		}
 		return nil
 	}); err != nil {
-		log.Printf("[Settler] settleOpen error: %v", err)
+		log.Printf("[Settler] settleCreateOrder error: %v", err)
 	}
 }
 
-// execTx runs a function within a database transaction.
-func (s *Settler) execTx(fn func(tx *sql.Tx) error) error {
-	if s.db == nil {
-		return nil // no DB (test mode)
-	}
-	tx, err := s.db.Begin()
-	if err != nil {
-		return fmt.Errorf("begin tx: %w", err)
-	}
-	if err := fn(tx); err != nil {
-		tx.Rollback()
-		return err
-	}
-	return tx.Commit()
-}
-
-func (s *Settler) settleClose(evt *SettleEvent) {
+// settleTrade writes a trade record + handles position/balance changes.
+func (s *Settler) settleTrade(evt *SettleEvent) {
 	if err := s.execTx(func(tx *sql.Tx) error {
-		if evt.IsPartialClose {
-			// Partial close: update quantity and margin, don't change status
-			if err := s.positionModel.UpdateQuantityAndMarginTx(tx, evt.PositionID, evt.RemainingQty, evt.RemainingMargin); err != nil {
-				return fmt.Errorf("update position partial close: %w", err)
+		// Create new position if needed (open)
+		if evt.Position != nil {
+			if err := s.positionModel.CreateTx(tx, evt.Position); err != nil {
+				return fmt.Errorf("create position: %w", err)
 			}
-		} else {
-			// Full close: update status
-			closeStatus := model.PositionStatusClosed
-			switch evt.CloseReason {
-			case model.CloseReasonLiquidation:
-				closeStatus = model.PositionStatusLiquidated
-			case model.CloseReasonForceTp:
-				closeStatus = model.PositionStatusForceTp
-			}
-			if err := s.positionModel.CloseTx(tx, evt.PositionID, closeStatus); err != nil {
-				return fmt.Errorf("close position: %w", err)
+			// Link trade to the DB-assigned position ID
+			if evt.Trade != nil {
+				evt.Trade.PositionID = &evt.Position.ID
 			}
 		}
-		if evt.Order != nil {
-			if err := s.orderModel.CreateTx(tx, evt.Order); err != nil {
-				return fmt.Errorf("persist close order: %w", err)
-			}
-		}
+
+		// Write trade
 		if evt.Trade != nil {
-			if evt.Order != nil && evt.Order.ID > 0 {
-				evt.Trade.OrderID = evt.Order.ID
-			}
 			if err := s.tradeModel.CreateTx(tx, evt.Trade); err != nil {
-				return fmt.Errorf("persist close trade: %w", err)
+				return fmt.Errorf("create trade: %w", err)
 			}
 		}
-		if evt.UserID > 0 {
-			if evt.CloseReason == model.CloseReasonLiquidation {
-				if err := s.accountModel.LiquidateMarginTx(tx, evt.UserID, evt.Margin); err != nil {
-					return fmt.Errorf("liquidate margin: %w", err)
+
+		// Position close/reduce
+		if evt.PositionID > 0 {
+			if evt.IsPartialClose {
+				if err := s.positionModel.UpdateQuantityAndMarginTx(tx, evt.PositionID, evt.RemainingQty, evt.RemainingMargin); err != nil {
+					return fmt.Errorf("update position partial close: %w", err)
 				}
-			} else {
-				if err := s.accountModel.ReturnMarginWithPnlTx(tx, evt.UserID, evt.Margin, evt.NetPnl); err != nil {
-					return fmt.Errorf("return margin: %w", err)
+			} else if evt.CloseReason > 0 || evt.Trade != nil && evt.Trade.IsClose {
+				closeStatus := model.PositionStatusClosed
+				switch evt.CloseReason {
+				case model.CloseReasonLiquidation:
+					closeStatus = model.PositionStatusLiquidated
+				case model.CloseReasonForceTp:
+					closeStatus = model.PositionStatusForceTp
+				}
+				if err := s.positionModel.CloseTx(tx, evt.PositionID, closeStatus); err != nil {
+					return fmt.Errorf("close position: %w", err)
 				}
 			}
 		}
+
+		// Balance update
+		if evt.UserID > 0 && !evt.BalanceDelta.IsZero() {
+			if err := s.accountModel.UpdateBalanceTx(tx, evt.UserID, evt.BalanceDelta, evt.FrozenDelta); err != nil {
+				return fmt.Errorf("update balance: %w", err)
+			}
+		}
+
 		return nil
 	}); err != nil {
-		log.Printf("[Settler] settleClose error: %v", err)
+		log.Printf("[Settler] settleTrade error: %v", err)
 	}
 }
 
@@ -319,3 +285,18 @@ func (s *Settler) settleFunding(evt *SettleEvent) {
 	}
 }
 
+// execTx runs a function within a database transaction.
+func (s *Settler) execTx(fn func(tx *sql.Tx) error) error {
+	if s.db == nil {
+		return nil // no DB (test mode)
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	if err := fn(tx); err != nil {
+		tx.Rollback()
+		return err
+	}
+	return tx.Commit()
+}
