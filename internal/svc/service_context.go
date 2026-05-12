@@ -155,6 +155,19 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		markPriceEngine, insuranceFund,
 	)
 
+	// Notify maker when their resting order is filled by another user's order
+	tradingEngine.SetOnMakerFill(func(userID int64, r *trading.PositionUpdateResult) {
+		msg, _ := ws.NewMessage("order_filled", map[string]interface{}{
+			"action":      r.Action,
+			"position_id": r.PositionID,
+			"side":        r.Side,
+			"entry_price": r.EntryPrice.String(),
+			"quantity":    r.Quantity.String(),
+			"margin":      r.Margin.String(),
+		})
+		hub.SendToUser(userID, msg)
+	})
+
 	// K-line aggregator
 	klineAggregator := pricefeed.NewKlineAggregator(func(bar *pricefeed.KlineBar) {
 		if err := klineModel.Upsert(bar.ToModelKline()); err != nil {

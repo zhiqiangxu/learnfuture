@@ -35,6 +35,9 @@ var (
 //   Engine (Matching)    → orderbook matching, memory state management
 //   Clearance (Clearing) → pure calculation: margin/fee/PnL/liq price
 //   Settler (Settlement) → DB persistence
+// MakerFillCallback is called when a maker's resting order is filled via ProcessTrades.
+type MakerFillCallback func(userID int64, result *PositionUpdateResult)
+
 type Engine struct {
 	mu                sync.Mutex
 	db                *sql.DB
@@ -54,6 +57,7 @@ type Engine struct {
 	maxPriceDeviation decimal.Decimal
 	memAccounts       *cache.AccountCache
 	nextPosID         atomic.Int64
+	onMakerFill       MakerFillCallback
 }
 
 type EngineConfig struct {
@@ -128,6 +132,7 @@ func NewEngine(
 }
 
 func (e *Engine) GetMemAccounts() *cache.AccountCache  { return e.memAccounts }
+func (e *Engine) SetOnMakerFill(cb MakerFillCallback)  { e.onMakerFill = cb }
 // WithLock executes fn while holding the engine mutex. Use for operations
 // that need to be atomic with position/account state (e.g., funding settlement).
 func (e *Engine) WithLock(fn func())                    { e.mu.Lock(); defer e.mu.Unlock(); fn() }
@@ -180,8 +185,11 @@ func (e *Engine) PlaceMarketOrder(userID int64, side, leverage, marginMode int, 
 	var pos *model.Position
 	var resultFee decimal.Decimal
 	if len(takerResults) > 0 {
-		r := takerResults[0]
-		resultFee = r.Fee
+		// Accumulate fee from all results; use the last open/increase result for position state
+		r := takerResults[len(takerResults)-1]
+		for _, tr := range takerResults {
+			resultFee = resultFee.Add(tr.Fee)
+		}
 		pos = &model.Position{
 			ID: r.PositionID, UserID: userID, Symbol: "BTCUSDT", Side: side,
 			MarginMode: marginMode, Leverage: leverage,
@@ -200,7 +208,7 @@ func (e *Engine) PlaceMarketOrder(userID int64, side, leverage, marginMode int, 
 
 	status := "filled"
 
-	merged := len(takerResults) > 0 && takerResults[0].Action == "increase"
+	merged := len(takerResults) > 0 && takerResults[len(takerResults)-1].Action == "increase"
 
 	return &PlaceOrderResult{
 		Position: pos, Trades: obTrades,
@@ -254,8 +262,8 @@ func (e *Engine) PlaceLimitOrder(userID int64, side, leverage int, margin, limit
 		avgPrice, totalQty := clearing.CalcVWAP(obTrades)
 
 		var resultFee decimal.Decimal
-		if len(takerResults) > 0 {
-			resultFee = takerResults[0].Fee
+		for _, tr := range takerResults {
+			resultFee = resultFee.Add(tr.Fee)
 		}
 		return &PlaceOrderResult{
 			Trades: obTrades, Status: "filled",
@@ -481,37 +489,48 @@ func decimalPtrToString(d *decimal.Decimal) string {
 	return d.String()
 }
 
-// processTrades handles BOTH sides of every trade using the unified updatePosition.
-// This is the single entry point for all position changes after orderbook matching.
-// takerUserID: the user who submitted the order (gets taker fee)
-// takerLeverage: leverage for new positions opened by the taker
 // ProcessTrades handles BOTH sides of every trade using the unified updatePosition.
+// This is the single entry point for all position changes after orderbook matching.
 func (e *Engine) ProcessTrades(trades []*orderbook.Trade, takerUserID int64, takerSide int, takerLeverage int) []*PositionUpdateResult {
 	var takerResults []*PositionUpdateResult
 	for _, t := range trades {
 		// Process buyer
-		buyerLeverage := 1 // default for maker/market-maker
-		buyerIsMaker := true
-		if t.BuyUserID == takerUserID {
-			buyerLeverage = takerLeverage
-			buyerIsMaker = false
-		}
+		buyerLeverage, buyerIsMaker := e.resolveLeverage(t.BuyUserID, t.BuyOrderID, takerUserID, takerLeverage)
 		r := e.UpdatePosition(t.BuyUserID, 1, t.Quantity, t.Price, buyerLeverage, buyerIsMaker, 0)
-		if t.BuyUserID == takerUserID && r != nil {
-			takerResults = append(takerResults, r)
+		if r != nil {
+			if t.BuyUserID == takerUserID {
+				takerResults = append(takerResults, r)
+			} else if e.onMakerFill != nil && t.BuyUserID > 0 {
+				e.onMakerFill(t.BuyUserID, r)
+			}
 		}
 
 		// Process seller
-		sellerLeverage := 1
-		sellerIsMaker := true
-		if t.SellUserID == takerUserID {
-			sellerLeverage = takerLeverage
-			sellerIsMaker = false
-		}
+		sellerLeverage, sellerIsMaker := e.resolveLeverage(t.SellUserID, t.SellOrderID, takerUserID, takerLeverage)
 		r = e.UpdatePosition(t.SellUserID, -1, t.Quantity, t.Price, sellerLeverage, sellerIsMaker, 0)
-		if t.SellUserID == takerUserID && r != nil {
-			takerResults = append(takerResults, r)
+		if r != nil {
+			if t.SellUserID == takerUserID {
+				takerResults = append(takerResults, r)
+			} else if e.onMakerFill != nil && t.SellUserID > 0 {
+				e.onMakerFill(t.SellUserID, r)
+			}
 		}
 	}
 	return takerResults
+}
+
+// resolveLeverage determines leverage and maker status for a trade participant.
+// Taker uses the leverage from the order request.
+// Maker (real user) uses the leverage from their cached order.
+// Market maker (UserID=0) / liquidation engine (UserID=-1) defaults to 1x.
+func (e *Engine) resolveLeverage(userID, orderID int64, takerUserID int64, takerLeverage int) (leverage int, isMaker bool) {
+	if userID == takerUserID {
+		return takerLeverage, false
+	}
+	// Try to get leverage from the maker's cached order
+	if cachedOrder, ok := e.orderCache.Get(orderID); ok {
+		return cachedOrder.Leverage, true
+	}
+	// System users (market maker, liquidation engine) — default 1x
+	return 1, true
 }
