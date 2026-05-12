@@ -133,6 +133,7 @@ func NewEngine(
 
 func (e *Engine) GetMemAccounts() *cache.AccountCache  { return e.memAccounts }
 func (e *Engine) SetOnMakerFill(cb MakerFillCallback)  { e.onMakerFill = cb }
+func (e *Engine) SetNextPosID(id int64)                { e.nextPosID.Store(id) }
 // WithLock executes fn while holding the engine mutex. Use for operations
 // that need to be atomic with position/account state (e.g., funding settlement).
 func (e *Engine) WithLock(fn func())                    { e.mu.Lock(); defer e.mu.Unlock(); fn() }

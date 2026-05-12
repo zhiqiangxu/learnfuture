@@ -659,7 +659,7 @@ async function placeOrder() {
     document.getElementById('margin-input').value = ''
     document.getElementById('limit-price-input').value = ''
     document.getElementById('calc-detail').style.display = 'none'
-    loadTradeInfo()
+    if (data.status === 'filled') switchTab('position')
   } catch(e) { alert('下单失败: ' + e.message) }
 }
 

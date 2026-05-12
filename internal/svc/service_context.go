@@ -18,6 +18,7 @@ import (
 	"learn_future/internal/engine/insurance"
 	"learn_future/internal/engine/markprice"
 	"learn_future/internal/engine/pricefeed"
+	"learn_future/internal/engine/reconcile"
 	"learn_future/internal/engine/trading"
 	"learn_future/internal/model"
 	"learn_future/internal/ws"
@@ -55,6 +56,7 @@ type ServiceContext struct {
 	FeeCalculator    *fee.Calculator
 	OrderBook        *orderbook.Book
 	MarketMakerBot   *marketmaker.Bot
+	Reconciler       *reconcile.Reconciler
 
 	// WebSocket
 	Hub *ws.Hub
@@ -277,6 +279,7 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		FeeCalculator:    feeCalculator,
 		OrderBook:        ob,
 		MarketMakerBot:   mmBot,
+		Reconciler:       reconcile.New(db, tradingEngine.GetMemAccounts(), positionCache),
 		Hub:              hub,
 	}
 }
@@ -340,6 +343,17 @@ func (svc *ServiceContext) LoadCachesFromDB() error {
 	}
 	log.Printf("[Cache] loaded %d account balances to memory", accountCount)
 
+	// Initialize nextPosID from DB max to avoid ID collision after restart
+	var maxPosID int64
+	err = svc.DB.QueryRow(`SELECT COALESCE(MAX(id), 0) FROM positions`).Scan(&maxPosID)
+	if err != nil {
+		return err
+	}
+	if maxPosID > 0 {
+		svc.TradingEngine.SetNextPosID(maxPosID)
+		log.Printf("[Cache] nextPosID initialized to %d", maxPosID)
+	}
+
 	return nil
 }
 
@@ -375,6 +389,7 @@ func (svc *ServiceContext) StartEngines() {
 	svc.FundingScheduler.Start() // 8h funding rate settlement
 	svc.MarkPriceEngine.Start()  // periodic spot price fetch
 	svc.MarketMakerBot.Start()   // market maker bot (orderbook liquidity)
+	svc.Reconciler.Start()       // daily T+1 reconciliation
 }
 
 func (svc *ServiceContext) StopEngines() {
