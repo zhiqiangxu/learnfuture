@@ -466,6 +466,7 @@ const I18N = {
   'pos.roi': isEn ? 'ROI' : '收益率',
   'pos.netPnl': isEn ? 'Net PnL (w/ funding)' : '净盈亏（含资金费）',
   'pos.entryPrice': isEn ? 'Entry Price' : '开仓价',
+  'pos.curPrice': isEn ? 'Current Price' : '当前价',
   'pos.qty': isEn ? 'Quantity' : '数量',
   'pos.margin': isEn ? 'Margin' : '保证金',
   'pos.fundingPnl': isEn ? 'Cum. Funding' : '累计资金费',
@@ -755,6 +756,10 @@ async function loadPositions() {
     const data = await GET('/api/v1/position/list')
     const list = data.positions || []
     if (list.length === 0) { document.getElementById('positions-list').innerHTML = `<div class="loading">${t('pos.empty')}</div>`; return }
+    let curPrice = document.getElementById('price').textContent
+    if (!curPrice || curPrice === '--') {
+      try { const pd = await GET('/api/v1/market/price'); curPrice = pd.price } catch(e) {}
+    }
 
     let html = ''
     list.forEach(p => {
@@ -771,11 +776,12 @@ async function loadPositions() {
         <div class="calc-row" style="margin-top:4px"><span class="muted">${t('pos.netPnl')}</span><span class="${parseFloat(p.unrealized_pnl)+parseFloat(p.funding_pnl||0)>=0?'up':'down'} bold">${(parseFloat(p.unrealized_pnl)+parseFloat(p.funding_pnl||0)).toFixed(2)} USDT</span></div>
         <div class="divider"></div>
         <div class="calc-row"><span class="muted">${t('pos.entryPrice')}</span><span>${p.entry_price}</span></div>
-        <div class="calc-row"><span class="muted">${t('pos.qty')}</span><span>${p.quantity} BTC</span></div>
+        <div class="calc-row"><span class="muted">${t('pos.curPrice')}</span><span class="pos-cur-price">${curPrice}</span></div>
+        <div class="calc-row"><span class="muted">${t('pos.qty')}</span><span>${parseFloat(p.quantity).toFixed(6)} BTC</span></div>
         <div class="calc-row"><span class="muted">${t('pos.margin')}</span><span>${p.margin} USDT</span></div>
         <div class="calc-row"><span class="muted">${t('pos.fundingPnl')}</span><span class="${parseFloat(p.funding_pnl||0)>=0?'up':'down'}">${p.funding_pnl||'0.00'} USDT</span></div>
-        <div class="calc-row"><span class="muted">${t('pos.liqPrice')}</span><span class="down">${p.liq_price}</span></div>
-        <div class="calc-row"><span class="muted">${t('pos.forceTpPrice')}</span><span class="up">${p.force_tp_price}</span></div>
+        <div class="calc-row"><span class="muted">${t('pos.liqPrice')}</span><span class="down">${parseFloat(p.liq_price).toFixed(2)}</span></div>
+        <div class="calc-row"><span class="muted">${t('pos.forceTpPrice')}</span><span class="up">${parseFloat(p.force_tp_price).toFixed(2)}</span></div>
         <div class="mt8" style="text-align:right"><button class="btn btn-short" style="width:auto;padding:8px 24px" onclick="closePos(${p.id})">${t('pos.close')}</button></div>
       </div>`
     })
@@ -906,7 +912,7 @@ function connectWS() {
     if (msg.type === 'ticker') {
       document.getElementById('price').textContent = msg.data.p
       document.getElementById('trade-price').textContent = msg.data.p
-      // Real-time kline update — handled by periodic loadKlines refresh
+      document.querySelectorAll('.pos-cur-price').forEach(el => el.textContent = msg.data.p)
     }
   }
   ws.onclose = () => setTimeout(connectWS, 3000)
