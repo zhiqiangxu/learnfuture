@@ -44,7 +44,7 @@ func CompleteTutorialHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 
 		userID := middleware.GetUserID(r.Context())
 
-		if _, ok := tutorial.Topics[req.TopicID]; !ok {
+		if _, ok := tutorial.GetTopics("")[req.TopicID]; !ok {
 			response.Error(w, 400, "invalid topic_id")
 			return
 		}

@@ -7,6 +7,7 @@ import (
 	"learn_future/internal/logic"
 	"learn_future/internal/middleware"
 	"learn_future/internal/svc"
+	"learn_future/internal/tutorial"
 	"learn_future/internal/types"
 	"learn_future/pkg/response"
 )
@@ -21,12 +22,13 @@ func PlaceOrderHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 
 		userID := middleware.GetUserID(r.Context())
 		l := logic.NewTradeLogic(svcCtx)
-		resp, tutorial, err := l.PlaceOrder(userID, &req)
+		lang := tutorial.ParseLang(r.Header.Get("Accept-Language"))
+		resp, tut, err := l.PlaceOrder(userID, &req, lang)
 		if err != nil {
 			response.Error(w, 500, err.Error())
 			return
 		}
-		response.SuccessWithTutorial(w, resp, tutorial)
+		response.SuccessWithTutorial(w, resp, tut)
 	}
 }
 

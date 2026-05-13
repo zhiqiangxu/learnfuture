@@ -31,7 +31,7 @@ type wxSessionResp struct {
 	ErrMsg     string `json:"errmsg"`
 }
 
-func (l *AuthLogic) WxLogin(req *types.WxLoginReq) (*types.WxLoginResp, *types.TutorialCard, error) {
+func (l *AuthLogic) WxLogin(req *types.WxLoginReq, lang string) (*types.WxLoginResp, *types.TutorialCard, error) {
 	if req.Code == "" {
 		return nil, nil, errors.New("code is required")
 	}
@@ -85,7 +85,7 @@ func (l *AuthLogic) WxLogin(req *types.WxLoginReq) (*types.WxLoginResp, *types.T
 	// Tutorial for new users
 	var card *types.TutorialCard
 	if isNewUser {
-		card = tutorial.Topics[tutorial.TopicPerpetualIntro]
+		card = tutorial.GetTopics(lang)[tutorial.TopicPerpetualIntro]
 	}
 
 	return &types.WxLoginResp{

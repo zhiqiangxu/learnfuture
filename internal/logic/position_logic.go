@@ -22,7 +22,7 @@ func NewPositionLogic(svcCtx *svc.ServiceContext) *PositionLogic {
 	return &PositionLogic{svcCtx: svcCtx}
 }
 
-func (l *PositionLogic) Close(userID, positionID int64, qtyStr string) (*types.ClosePositionResp, *types.TutorialCard, error) {
+func (l *PositionLogic) Close(userID, positionID int64, qtyStr string, lang string) (*types.ClosePositionResp, *types.TutorialCard, error) {
 	var closeQty decimal.Decimal
 	if qtyStr != "" {
 		var err error
@@ -44,7 +44,7 @@ func (l *PositionLogic) Close(userID, positionID int64, qtyStr string) (*types.C
 	}
 
 	completed, _ := l.svcCtx.TutorialModel.GetCompleted(userID)
-	card := tutorial.ShouldShow(tutorial.TopicRealizedPnl, completed)
+	card := tutorial.ShouldShow(tutorial.TopicRealizedPnl, completed, lang)
 	if card != nil {
 		card = tutorial.ForRealizedPnl(tutorial.TriggerContext{
 			RawPnl:  result.RawPnl.StringFixed(2),
@@ -52,6 +52,7 @@ func (l *PositionLogic) Close(userID, positionID int64, qtyStr string) (*types.C
 			Fee:     result.Fee.StringFixed(2),
 			Funding: result.FundingPnl.StringFixed(2),
 			NetPnl:  result.NetPnl.StringFixed(2),
+			Lang:    lang,
 		})
 		l.svcCtx.TutorialModel.MarkComplete(userID, tutorial.TopicRealizedPnl)
 	}
@@ -59,7 +60,7 @@ func (l *PositionLogic) Close(userID, positionID int64, qtyStr string) (*types.C
 	return resp, card, nil
 }
 
-func (l *PositionLogic) UpdateTPSL(userID int64, req *types.UpdateTPSLReq) (*types.TutorialCard, error) {
+func (l *PositionLogic) UpdateTPSL(userID int64, req *types.UpdateTPSLReq, lang string) (*types.TutorialCard, error) {
 	pos, err := l.svcCtx.PositionModel.FindByID(req.PositionID)
 	if err != nil {
 		return nil, err
@@ -111,7 +112,7 @@ func (l *PositionLogic) UpdateTPSL(userID int64, req *types.UpdateTPSLReq) (*typ
 	})
 
 	completed, _ := l.svcCtx.TutorialModel.GetCompleted(userID)
-	card := tutorial.ShouldShow(tutorial.TopicTPSL, completed)
+	card := tutorial.ShouldShow(tutorial.TopicTPSL, completed, lang)
 	if card != nil {
 		l.svcCtx.TutorialModel.MarkComplete(userID, tutorial.TopicTPSL)
 	}

@@ -22,6 +22,22 @@ const (
 	TopicMarginMode      = "margin_mode"
 )
 
+// ParseLang extracts language from Accept-Language header. Returns "en" or "".
+func ParseLang(acceptLang string) string {
+	if len(acceptLang) >= 2 && (acceptLang[:2] == "en" || acceptLang[:2] == "EN") {
+		return "en"
+	}
+	return ""
+}
+
+// GetTopics returns the topic map for the given language.
+func GetTopics(lang string) map[string]*types.TutorialCard {
+	if len(lang) >= 2 && (lang[:2] == "en" || lang[:2] == "EN") {
+		return TopicsEN
+	}
+	return Topics
+}
+
 var AllTopicIDs = []string{
 	TopicPerpetualIntro,
 	TopicLeverage,

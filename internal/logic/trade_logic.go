@@ -18,7 +18,7 @@ func NewTradeLogic(svcCtx *svc.ServiceContext) *TradeLogic {
 	return &TradeLogic{svcCtx: svcCtx}
 }
 
-func (l *TradeLogic) PlaceOrder(userID int64, req *types.PlaceOrderReq) (*types.PlaceOrderResp, *types.TutorialCard, error) {
+func (l *TradeLogic) PlaceOrder(userID int64, req *types.PlaceOrderReq, lang string) (*types.PlaceOrderResp, *types.TutorialCard, error) {
 	margin, err := decimal.NewFromString(req.Margin)
 	if err != nil {
 		return nil, nil, err
@@ -69,7 +69,7 @@ func (l *TradeLogic) PlaceOrder(userID int64, req *types.PlaceOrderReq) (*types.
 		resp.Detail = l.buildOrderDetail(req, result)
 	}
 
-	card := l.getTutorialCard(userID, req)
+	card := l.getTutorialCard(userID, req, lang)
 	return resp, card, nil
 }
 
@@ -129,7 +129,7 @@ func (l *TradeLogic) buildOrderDetail(req *types.PlaceOrderReq, result *trading.
 	}
 }
 
-func (l *TradeLogic) getTutorialCard(userID int64, req *types.PlaceOrderReq) *types.TutorialCard {
+func (l *TradeLogic) getTutorialCard(userID int64, req *types.PlaceOrderReq, lang string) *types.TutorialCard {
 	if l.svcCtx.TutorialModel == nil {
 		return nil
 	}
@@ -155,7 +155,7 @@ func (l *TradeLogic) getTutorialCard(userID int64, req *types.PlaceOrderReq) *ty
 		return nil
 	}
 
-	card := tutorial.ShouldShow(topicID, completed)
+	card := tutorial.ShouldShow(topicID, completed, lang)
 	if card != nil {
 		l.svcCtx.TutorialModel.MarkComplete(userID, topicID)
 	}

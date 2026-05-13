@@ -6,7 +6,7 @@ import (
 
 func TestShouldShow_NotCompleted(t *testing.T) {
 	completed := map[string]bool{}
-	card := ShouldShow(TopicLeverage, completed)
+	card := ShouldShow(TopicLeverage, completed, "")
 	if card == nil {
 		t.Error("expected tutorial card for uncompleted topic")
 	}
@@ -17,7 +17,7 @@ func TestShouldShow_NotCompleted(t *testing.T) {
 
 func TestShouldShow_AlreadyCompleted(t *testing.T) {
 	completed := map[string]bool{TopicLeverage: true}
-	card := ShouldShow(TopicLeverage, completed)
+	card := ShouldShow(TopicLeverage, completed, "")
 	if card != nil {
 		t.Error("expected nil for completed show_once topic")
 	}
@@ -26,14 +26,14 @@ func TestShouldShow_AlreadyCompleted(t *testing.T) {
 func TestShouldShow_ShowOnceFalse(t *testing.T) {
 	// PostLiquidation has show_once=false
 	completed := map[string]bool{TopicPostLiquidation: true}
-	card := ShouldShow(TopicPostLiquidation, completed)
+	card := ShouldShow(TopicPostLiquidation, completed, "")
 	if card == nil {
 		t.Error("expected card for show_once=false topic even if completed")
 	}
 }
 
 func TestShouldShow_InvalidTopic(t *testing.T) {
-	card := ShouldShow("nonexistent_topic", map[string]bool{})
+	card := ShouldShow("nonexistent_topic", map[string]bool{}, "")
 	if card != nil {
 		t.Error("expected nil for invalid topic")
 	}

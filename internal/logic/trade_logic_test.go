@@ -37,7 +37,7 @@ func TestTradeLogic_PlaceOrder_InvalidMargin(t *testing.T) {
 		OrderType: 1,
 		Leverage:  10,
 		Margin:    "0.5", // below MinMargin=1
-	})
+	}, "")
 	if err == nil {
 		t.Error("expected error for margin too small")
 	}
@@ -54,7 +54,7 @@ func TestTradeLogic_PlaceOrder_InvalidSide(t *testing.T) {
 		OrderType: 1,
 		Leverage:  10,
 		Margin:    "100",
-	})
+	}, "")
 	if err == nil {
 		t.Error("expected error for invalid side")
 	}
@@ -69,7 +69,7 @@ func TestTradeLogic_PlaceOrder_BadMarginFormat(t *testing.T) {
 		OrderType: 1,
 		Leverage:  10,
 		Margin:    "not_a_number",
-	})
+	}, "")
 	if err == nil {
 		t.Error("expected error for bad margin format")
 	}
@@ -87,7 +87,7 @@ func TestTradeLogic_PlaceMarketOrder_Success(t *testing.T) {
 		OrderType: 1,
 		Leverage:  10,
 		Margin:    "100",
-	})
+	}, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -108,7 +108,7 @@ func TestTradeLogic_PlaceMarketOrder_InsufficientBalance(t *testing.T) {
 		OrderType: 1,
 		Leverage:  10,
 		Margin:    "100", // need 100 + fee > 50 available
-	})
+	}, "")
 	if err == nil {
 		t.Error("expected insufficient balance error")
 	}
@@ -127,7 +127,7 @@ func TestTradeLogic_PlaceLimitOrder_Success(t *testing.T) {
 		Leverage:  10,
 		Margin:    "100",
 		Price:     "59000",
-	})
+	}, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -149,7 +149,7 @@ func TestTradeLogic_PlaceLimitOrder_PriceDeviationTooLarge(t *testing.T) {
 		Leverage:  10,
 		Margin:    "100",
 		Price:     "50000", // >10% deviation
-	})
+	}, "")
 	if err == nil {
 		t.Error("expected price deviation error")
 	}
@@ -171,7 +171,7 @@ func TestTradeLogic_getTutorialCard_FirstOrder(t *testing.T) {
 	l := NewTradeLogic(svcCtx)
 
 	req := &types.PlaceOrderReq{Side: 1, OrderType: 1, Leverage: 10, Margin: "100"}
-	card := l.getTutorialCard(1, req)
+	card := l.getTutorialCard(1, req, "")
 	// With nil TutorialModel, completed map is nil → all topics "not completed"
 	// First topic should be perpetual_intro
 	if card != nil && card.ID != "perpetual_intro" {

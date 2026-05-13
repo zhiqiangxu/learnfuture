@@ -101,9 +101,9 @@
       <div class="muted sm">BTC/USDT</div>
       <div id="price" class="price-big">--</div>
       <div class="flex between mt8">
-        <div class="stat"><span class="muted sm term">24h涨跌<span class="term-tip">过去24小时的价格涨跌幅度，正数表示上涨，负数表示下跌</span></span><span id="change" class="up">0.00%</span></div>
-        <div class="stat"><span class="muted sm term">24h最高<span class="term-tip">过去24小时内的最高成交价</span></span><span id="high">--</span></div>
-        <div class="stat"><span class="muted sm term">24h最低<span class="term-tip">过去24小时内的最低成交价</span></span><span id="low">--</span></div>
+        <div class="stat"><span class="muted sm" data-i18n="market.change">24h涨跌</span><span id="change" class="up">0.00%</span></div>
+        <div class="stat"><span class="muted sm" data-i18n="market.high">24h最高</span><span id="high">--</span></div>
+        <div class="stat"><span class="muted sm" data-i18n="market.low">24h最低</span><span id="low">--</span></div>
       </div>
       <div class="divider"></div>
       <div class="flex between">
@@ -411,11 +411,11 @@
 
   <!-- Tab bar -->
   <div class="tab-bar">
-    <div class="tab active" onclick="switchTab('market')">行情</div>
-    <div class="tab" onclick="switchTab('trade')">交易</div>
-    <div class="tab" onclick="switchTab('position')">持仓</div>
-    <div class="tab" onclick="switchTab('history')">历史</div>
-    <div class="tab" onclick="switchTab('profile')">我的</div>
+    <div class="tab active" onclick="switchTab('market')" data-i18n="tab.market">行情</div>
+    <div class="tab" onclick="switchTab('trade')" data-i18n="tab.trade">交易</div>
+    <div class="tab" onclick="switchTab('position')" data-i18n="tab.position">持仓</div>
+    <div class="tab" onclick="switchTab('history')" data-i18n="tab.history">历史</div>
+    <div class="tab" onclick="switchTab('profile')" data-i18n="tab.profile">我的</div>
   </div>
 </div>
 
@@ -425,6 +425,91 @@ let token = localStorage.getItem('token') || ''
 let state = { side: 1, leverage: 10, orderType: 1 }
 let suppressTutorial = false
 let klineData = [] // store for reference
+
+// === i18n ===
+const isEn = /^en/i.test(navigator.language)
+const I18N = {
+  // Tabs
+  'tab.market': isEn ? 'Market' : '行情',
+  'tab.trade': isEn ? 'Trade' : '交易',
+  'tab.position': isEn ? 'Position' : '持仓',
+  'tab.history': isEn ? 'History' : '历史',
+  'tab.profile': isEn ? 'Profile' : '我的',
+  // Market page
+  'market.change': isEn ? '24h Change' : '24h涨跌',
+  'market.high': isEn ? '24h High' : '24h最高',
+  'market.low': isEn ? '24h Low' : '24h最低',
+  'market.markPrice': isEn ? 'Mark Price' : '标记价格',
+  'market.indexPrice': isEn ? 'Index Price' : '指数价格',
+  'market.basis': isEn ? 'Basis' : '基差',
+  'market.fundingRate': isEn ? 'Funding Rate' : '资金费率',
+  'market.nextSettle': isEn ? 'Next Settlement' : '下次结算',
+  'market.orderbook': isEn ? 'Order Book' : '订单簿',
+  'market.price': isEn ? 'Price' : '价格',
+  'market.quantity': isEn ? 'Quantity' : '数量',
+  'market.spread': isEn ? 'Spread' : '价差',
+  'market.insFund': isEn ? 'Insurance Fund' : '保险基金',
+  // Trade page
+  'trade.long': isEn ? 'Long' : '做多',
+  'trade.short': isEn ? 'Short' : '做空',
+  'trade.market': isEn ? 'Market' : '市价',
+  'trade.limit': isEn ? 'Limit' : '限价',
+  'trade.margin': isEn ? 'Margin (USDT)' : '保证金 (USDT)',
+  'trade.limitPrice': isEn ? 'Limit Price' : '限价价格',
+  'trade.leverage': isEn ? 'Leverage' : '杠杆',
+  'trade.openLong': isEn ? 'Open Long' : '开多 买入/做多',
+  'trade.openShort': isEn ? 'Open Short' : '开空 卖出/做空',
+  'trade.balance': isEn ? 'Balance' : '余额',
+  'trade.curPrice': isEn ? 'Price' : '当前价',
+  // Position page
+  'pos.upnl': isEn ? 'Unrealized PnL' : '未实现盈亏',
+  'pos.roi': isEn ? 'ROI' : '收益率',
+  'pos.netPnl': isEn ? 'Net PnL (w/ funding)' : '净盈亏（含资金费）',
+  'pos.entryPrice': isEn ? 'Entry Price' : '开仓价',
+  'pos.qty': isEn ? 'Quantity' : '数量',
+  'pos.margin': isEn ? 'Margin' : '保证金',
+  'pos.fundingPnl': isEn ? 'Cum. Funding' : '累计资金费',
+  'pos.liqPrice': isEn ? 'Liq. Price' : '强平价',
+  'pos.forceTpPrice': isEn ? 'Force TP Price' : '强盈价',
+  'pos.close': isEn ? 'Close' : '平仓',
+  'pos.empty': isEn ? 'No positions' : '暂无持仓',
+  'pos.login': isEn ? 'Place a trade first' : '请先交易以创建账户',
+  // History page
+  'hist.orders': isEn ? 'Orders' : '订单',
+  'hist.trades': isEn ? 'Trades' : '成交',
+  'hist.pnl': isEn ? 'PnL' : '盈亏',
+  'hist.totalPnl': isEn ? 'Total PnL' : '总盈亏',
+  'hist.totalFee': isEn ? 'Total Fees' : '总手续费',
+  'hist.totalFunding': isEn ? 'Total Funding' : '总资金费',
+  'hist.winRate': isEn ? 'Win Rate' : '胜率',
+  'hist.bestTrade': isEn ? 'Best Trade' : '最佳交易',
+  'hist.worstTrade': isEn ? 'Worst Trade' : '最差交易',
+  'hist.liqCount': isEn ? 'Liquidations' : '强平次数',
+  'hist.ftpCount': isEn ? 'Force TPs' : '强盈次数',
+  // Profile page
+  'profile.balance': isEn ? 'Balance' : '余额',
+  'profile.totalPnl': isEn ? 'Total PnL' : '累计盈亏',
+  'profile.progress': isEn ? 'Learning Progress' : '学习进度',
+  'profile.reset': isEn ? 'Reset Account (back to 10,000 USDT)' : '重置账户 (回到10,000 USDT)',
+  // Common
+  'common.long': isEn ? 'Long' : '多',
+  'common.short': isEn ? 'Short' : '空',
+  'common.open': isEn ? 'Open' : '开仓',
+  'common.closeAction': isEn ? 'Close' : '平仓',
+  'common.confirm': isEn ? 'Confirm close?' : '确定平仓？',
+  'common.closeOk': isEn ? 'Closed! Net PnL: ' : '平仓成功！净盈亏: ',
+  'common.closeFail': isEn ? 'Close failed: ' : '平仓失败: ',
+  'common.orderOk': isEn ? 'Order placed' : '下单成功',
+  'common.orderPending': isEn ? 'Limit order placed, waiting to fill' : '限价单已挂出，等待成交',
+  'common.orderFail': isEn ? 'Order failed: ' : '下单失败: ',
+  'common.openOk': isEn ? 'Position Opened' : '开仓成功',
+  'common.resetConfirm': isEn ? 'This will clear all data and reset balance to 10,000 USDT. Confirm?' : '将清空所有数据，余额重置为10,000 USDT，确定？',
+  'common.resetOk': isEn ? 'Reset successful' : '重置成功',
+  'common.resetFail': isEn ? 'Reset failed: ' : '重置失败: ',
+  'common.win': isEn ? 'W' : '胜',
+  'common.loss': isEn ? 'L' : '负',
+}
+function t(key) { return I18N[key] || key }
 
 // === API ===
 async function api(method, path, body) {
@@ -647,50 +732,51 @@ async function placeOrder() {
     if (data.status === 'filled' && data.detail) {
       const d = data.detail
       showTutorial({
-        title: '✅ 开仓成功',
+        title: '✅ ' + t('common.openOk'),
         content: `方向: ${d.side}\n成交价: ${d.entry_price}\n数量: ${d.quantity} BTC\n仓位价值: ${d.position_value} USDT\n手续费: ${d.fee} USDT\n强平价: ${d.liq_price}\n强盈价: ${d.force_tp_price}`,
         formula: d.formulas ? d.formulas.join('\n') : ''
       })
     } else if (data.status === 'pending') {
-      alert('限价单已挂出，等待成交')
+      alert(t('common.orderPending'))
     } else {
-      alert('下单成功')
+      alert(t('common.orderOk'))
     }
     document.getElementById('margin-input').value = ''
     document.getElementById('limit-price-input').value = ''
     document.getElementById('calc-detail').style.display = 'none'
     if (data.status === 'filled') switchTab('position')
-  } catch(e) { alert('下单失败: ' + e.message) }
+  } catch(e) { alert(t('common.orderFail') + e.message) }
 }
 
 // === Position Page ===
 async function loadPositions() {
-  if (!token) { document.getElementById('positions-list').innerHTML = '<div class="loading">请先交易以创建账户</div>'; return }
+  if (!token) { document.getElementById('positions-list').innerHTML = `<div class="loading">${t('pos.login')}</div>`; return }
   try {
     const data = await GET('/api/v1/position/list')
     const list = data.positions || []
-    if (list.length === 0) { document.getElementById('positions-list').innerHTML = '<div class="loading">暂无持仓</div>'; return }
+    if (list.length === 0) { document.getElementById('positions-list').innerHTML = `<div class="loading">${t('pos.empty')}</div>`; return }
 
     let html = ''
     list.forEach(p => {
       const upnlClass = parseFloat(p.unrealized_pnl) >= 0 ? 'up' : 'down'
+      const sideLabel = p.side===1 ? t('common.long') : t('common.short')
       html += `<div class="card">
         <div class="flex between center">
-          <div><span class="bold">BTC/USDT</span> <span class="pos-badge ${p.side===1?'bg-up':'bg-down'}">${p.side===1?'多':'空'} ${p.leverage}x</span></div>
+          <div><span class="bold">BTC/USDT</span> <span class="pos-badge ${p.side===1?'bg-up':'bg-down'}">${sideLabel} ${p.leverage}x</span></div>
         </div>
         <div class="flex between mt8">
-          <div class="stat"><span class="muted sm">未实现盈亏</span><span class="${upnlClass} bold">${p.unrealized_pnl} USDT</span></div>
-          <div class="stat"><span class="muted sm">收益率</span><span class="${upnlClass}">${p.roi}%</span></div>
+          <div class="stat"><span class="muted sm">${t('pos.upnl')}</span><span class="${upnlClass} bold">${p.unrealized_pnl} USDT</span></div>
+          <div class="stat"><span class="muted sm">${t('pos.roi')}</span><span class="${upnlClass}">${p.roi}%</span></div>
         </div>
-        <div class="calc-row" style="margin-top:4px"><span class="muted">净盈亏（含资金费）</span><span class="${parseFloat(p.unrealized_pnl)+parseFloat(p.funding_pnl||0)>=0?'up':'down'} bold">${(parseFloat(p.unrealized_pnl)+parseFloat(p.funding_pnl||0)).toFixed(2)} USDT</span></div>
+        <div class="calc-row" style="margin-top:4px"><span class="muted">${t('pos.netPnl')}</span><span class="${parseFloat(p.unrealized_pnl)+parseFloat(p.funding_pnl||0)>=0?'up':'down'} bold">${(parseFloat(p.unrealized_pnl)+parseFloat(p.funding_pnl||0)).toFixed(2)} USDT</span></div>
         <div class="divider"></div>
-        <div class="calc-row"><span class="muted">开仓价</span><span>${p.entry_price}</span></div>
-        <div class="calc-row"><span class="muted">数量</span><span>${p.quantity} BTC</span></div>
-        <div class="calc-row"><span class="muted">保证金</span><span>${p.margin} USDT</span></div>
-        <div class="calc-row"><span class="muted">累计资金费</span><span class="${parseFloat(p.funding_pnl||0)>=0?'up':'down'}">${p.funding_pnl||'0.00'} USDT</span></div>
-        <div class="calc-row"><span class="muted">强平价</span><span class="down">${p.liq_price}</span></div>
-        <div class="calc-row"><span class="muted">强盈价</span><span class="up">${p.force_tp_price}</span></div>
-        <div class="mt8" style="text-align:right"><button class="btn btn-short" style="width:auto;padding:8px 24px" onclick="closePos(${p.id})">平仓</button></div>
+        <div class="calc-row"><span class="muted">${t('pos.entryPrice')}</span><span>${p.entry_price}</span></div>
+        <div class="calc-row"><span class="muted">${t('pos.qty')}</span><span>${p.quantity} BTC</span></div>
+        <div class="calc-row"><span class="muted">${t('pos.margin')}</span><span>${p.margin} USDT</span></div>
+        <div class="calc-row"><span class="muted">${t('pos.fundingPnl')}</span><span class="${parseFloat(p.funding_pnl||0)>=0?'up':'down'}">${p.funding_pnl||'0.00'} USDT</span></div>
+        <div class="calc-row"><span class="muted">${t('pos.liqPrice')}</span><span class="down">${p.liq_price}</span></div>
+        <div class="calc-row"><span class="muted">${t('pos.forceTpPrice')}</span><span class="up">${p.force_tp_price}</span></div>
+        <div class="mt8" style="text-align:right"><button class="btn btn-short" style="width:auto;padding:8px 24px" onclick="closePos(${p.id})">${t('pos.close')}</button></div>
       </div>`
     })
     document.getElementById('positions-list').innerHTML = html
@@ -698,12 +784,12 @@ async function loadPositions() {
 }
 
 async function closePos(id) {
-  if (!confirm('确定平仓？')) return
+  if (!confirm(t('common.confirm'))) return
   try {
     const data = await POST('/api/v1/position/close', { position_id: id })
-    alert('平仓成功！净盈亏: ' + data.net_pnl + ' USDT')
+    alert(t('common.closeOk') + data.net_pnl + ' USDT')
     loadPositions()
-  } catch(e) { alert('平仓失败: ' + e.message) }
+  } catch(e) { alert(t('common.closeFail') + e.message) }
 }
 
 // === History Page ===
@@ -760,13 +846,13 @@ async function loadHistory(tab) {
       list.innerHTML = `<div class="card">
         <div class="calc-row"><span class="muted">总盈亏</span><span class="${parseFloat(data.total_pnl)>=0?'up':'down'} bold">${data.total_pnl} USDT</span></div>
         <div class="divider"></div>
-        <div class="calc-row"><span class="muted">总手续费</span><span>${data.total_fee} USDT</span></div>
-        <div class="calc-row"><span class="muted">总资金费</span><span>${data.total_funding} USDT</span></div>
-        <div class="calc-row"><span class="muted">胜率</span><span>${data.win_rate}% (${data.win_count}胜/${data.loss_count}负)</span></div>
-        <div class="calc-row"><span class="muted">最佳交易</span><span class="up">${data.best_trade} USDT</span></div>
-        <div class="calc-row"><span class="muted">最差交易</span><span class="down">${data.worst_trade} USDT</span></div>
-        <div class="calc-row"><span class="muted">强平次数</span><span>${data.liquidated_count}</span></div>
-        <div class="calc-row"><span class="muted">强盈次数</span><span>${data.force_tp_count}</span></div>
+        <div class="calc-row"><span class="muted">${t('hist.totalFee')}</span><span>${data.total_fee} USDT</span></div>
+        <div class="calc-row"><span class="muted">${t('hist.totalFunding')}</span><span>${data.total_funding} USDT</span></div>
+        <div class="calc-row"><span class="muted">${t('hist.winRate')}</span><span>${data.win_rate}% (${data.win_count}${t('common.win')}/${data.loss_count}${t('common.loss')})</span></div>
+        <div class="calc-row"><span class="muted">${t('hist.bestTrade')}</span><span class="up">${data.best_trade} USDT</span></div>
+        <div class="calc-row"><span class="muted">${t('hist.worstTrade')}</span><span class="down">${data.worst_trade} USDT</span></div>
+        <div class="calc-row"><span class="muted">${t('hist.liqCount')}</span><span>${data.liquidated_count}</span></div>
+        <div class="calc-row"><span class="muted">${t('hist.ftpCount')}</span><span>${data.force_tp_count}</span></div>
       </div>`
     }
   } catch(e) { list.innerHTML = '<div class="loading">加载失败</div>'; console.error(e) }
@@ -1060,6 +1146,11 @@ async function init() {
     presetsDiv.appendChild(s)
   })
 
+  // Apply i18n to all data-i18n elements
+  document.querySelectorAll('[data-i18n]').forEach(el => {
+    el.textContent = t(el.dataset.i18n)
+  })
+
   // Restore tab from URL hash
   const savedTab = location.hash.replace('#', '') || 'market'
   switchTab(savedTab)
@@ -1070,7 +1161,15 @@ async function init() {
 
   // Welcome tutorial for first-time users
   if (!localStorage.getItem('welcomed')) {
-    showTutorial({
+    showTutorial(isEn ? {
+      title: 'Welcome to Futures Simulator',
+      content: 'A perpetual futures simulation platform with 10,000 USDT virtual funds.\n\n' +
+        'Market: Real-time BTC price, K-line, order book\n' +
+        'Trade: Go Long (bullish) or Short (bearish)\n' +
+        'Position: View PnL, close positions\n\n' +
+        'Tutorial cards will appear at each step to help you learn.',
+      formula: 'Key formulas:\nPnL = (Current - Entry) × Qty × Direction\nMargin = Position Value / Leverage'
+    } : {
       title: '欢迎来到合约模拟学习平台',
       content: '这是一个永续合约模拟交易平台，使用虚拟资金（10,000 USDT）体验真实的合约交易流程。\n\n' +
         '📈 行情页：查看BTC实时价格、K线、订单簿深度\n' +
