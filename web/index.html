@@ -765,13 +765,13 @@ async function loadPositions() {
     list.forEach(p => {
       const upnlClass = parseFloat(p.unrealized_pnl) >= 0 ? 'up' : 'down'
       const sideLabel = p.side===1 ? t('common.long') : t('common.short')
-      html += `<div class="card">
+      html += `<div class="card" id="pos-card-${p.id}">
         <div class="flex between center">
           <div><span class="bold">BTC/USDT</span> <span class="pos-badge ${p.side===1?'bg-up':'bg-down'}">${sideLabel} ${p.leverage}x</span></div>
         </div>
         <div class="flex between mt8">
-          <div class="stat"><span class="muted sm">${t('pos.upnl')}</span><span class="${upnlClass} bold">${p.unrealized_pnl} USDT</span></div>
-          <div class="stat"><span class="muted sm">${t('pos.roi')}</span><span class="${upnlClass}">${p.roi}%</span></div>
+          <div class="stat"><span class="muted sm">${t('pos.upnl')}</span><span class="pos-upnl ${upnlClass} bold">${p.unrealized_pnl} USDT</span></div>
+          <div class="stat"><span class="muted sm">${t('pos.roi')}</span><span class="pos-roi ${upnlClass}">${p.roi}%</span></div>
         </div>
         <div class="calc-row" style="margin-top:4px"><span class="muted">${t('pos.netPnl')}</span><span class="${parseFloat(p.unrealized_pnl)+parseFloat(p.funding_pnl||0)>=0?'up':'down'} bold">${(parseFloat(p.unrealized_pnl)+parseFloat(p.funding_pnl||0)).toFixed(2)} USDT</span></div>
         <div class="divider"></div>
@@ -919,6 +919,17 @@ function connectWS() {
       document.getElementById('price').textContent = msg.data.p
       document.getElementById('trade-price').textContent = msg.data.p
       document.querySelectorAll('.pos-cur-price').forEach(el => el.textContent = msg.data.p)
+    } else if (msg.type === 'position_pnl') {
+      const d = msg.data
+      const card = document.getElementById('pos-card-' + d.id)
+      if (card) {
+        const upnl = parseFloat(d.upnl)
+        const cls = upnl >= 0 ? 'up' : 'down'
+        card.querySelector('.pos-upnl').className = 'pos-upnl ' + cls + ' bold'
+        card.querySelector('.pos-upnl').textContent = d.upnl + ' USDT'
+        card.querySelector('.pos-roi').className = 'pos-roi ' + cls
+        card.querySelector('.pos-roi').textContent = d.roi + '%'
+      }
     }
   }
   ws.onclose = () => setTimeout(connectWS, 3000)
