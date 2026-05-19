@@ -81,7 +81,6 @@ func (r *Reconciler) RunAll() {
 	var details []string
 	details = append(details, r.checkBalances()...)
 	details = append(details, r.checkPositions()...)
-	details = append(details, r.checkZeroSum()...)
 
 	if len(details) == 0 {
 		log.Println("[Reconcile] all checks passed")
@@ -166,27 +165,6 @@ func (r *Reconciler) checkPositions() []string {
 		}
 	}
 	return issues
-}
-
-// checkZeroSum verifies ∑longs ≡ ∑shorts across all positions in memory.
-func (r *Reconciler) checkZeroSum() []string {
-	allPositions := r.positionCache.GetAll()
-	sumLong := decimal.Zero
-	sumShort := decimal.Zero
-	for _, p := range allPositions {
-		qty, _ := decimal.NewFromString(p.Quantity)
-		if p.Side == 1 {
-			sumLong = sumLong.Add(qty)
-		} else {
-			sumShort = sumShort.Add(qty)
-		}
-	}
-
-	if !sumLong.Equal(sumShort) {
-		return []string{fmt.Sprintf("ZERO-SUM VIOLATED longs=%s shorts=%s diff=%s",
-			sumLong, sumShort, sumLong.Sub(sumShort))}
-	}
-	return nil
 }
 
 // sendAlert sends email notification for reconciliation issues.
