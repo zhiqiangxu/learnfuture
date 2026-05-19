@@ -40,3 +40,11 @@ Trading:
 Funding:
   SettleHours: [0, 8, 16]    # UTC 小时
   FetchURL: "https://fapi.binance.com/fapi/v1/premiumIndex?symbol=BTCUSDT"
+
+# 对账告警邮件 (留空则只记录日志, 不发邮件)
+Alert:
+  SMTPHost: ""
+  SMTPPort: "587"
+  SMTPUser: ""
+  SMTPPass: ""
+  To: ""

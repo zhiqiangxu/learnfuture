@@ -45,4 +45,12 @@ type Config struct {
 		SettleHours []int
 		FetchURL    string
 	}
+
+	Alert struct {
+		SMTPHost string `json:",optional"`
+		SMTPPort string `json:",optional,default=587"`
+		SMTPUser string `json:",optional"`
+		SMTPPass string `json:",optional"`
+		To       string `json:",optional"`
+	}
 }

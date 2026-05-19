@@ -13,20 +13,37 @@ import (
 	"learn_future/internal/cache"
 )
 
+// reconcileTolerance is the max acceptable drift between memory and DB.
+// Set above the 8th-decimal rounding noise from PG numeric(20,8) truncation
+// vs. full-precision decimal math in memory; anything larger is a real bug.
+var reconcileTolerance = decimal.New(1, -6) // 1e-6
+
+// AlertConfig holds SMTP credentials for reconcile alert email.
+// Leaving any field empty disables email delivery (issues are still logged).
+type AlertConfig struct {
+	SMTPHost string
+	SMTPPort string
+	SMTPUser string
+	SMTPPass string
+	To       string
+}
+
 // Reconciler runs daily T+1 checks comparing memory state against DB.
 // Discrepancies are logged as warnings and emailed to admin.
 type Reconciler struct {
 	db            *sql.DB
 	memAccounts   *cache.AccountCache
 	positionCache *cache.PositionCache
+	alert         AlertConfig
 	done          chan struct{}
 }
 
-func New(db *sql.DB, memAccounts *cache.AccountCache, positionCache *cache.PositionCache) *Reconciler {
+func New(db *sql.DB, memAccounts *cache.AccountCache, positionCache *cache.PositionCache, alert AlertConfig) *Reconciler {
 	return &Reconciler{
 		db:            db,
 		memAccounts:   memAccounts,
 		positionCache: positionCache,
+		alert:         alert,
 		done:          make(chan struct{}),
 	}
 }
@@ -94,11 +111,11 @@ func (r *Reconciler) checkBalances() []string {
 			continue
 		}
 		memBalance := r.memAccounts.GetBalance(userID)
-		// Compare at DB precision (8 decimal places) to avoid false positives
-		if !memBalance.Round(8).Equal(dbBalance.Round(8)) {
+		diff := memBalance.Sub(dbBalance)
+		if diff.Abs().GreaterThan(reconcileTolerance) {
 			issues = append(issues, fmt.Sprintf("BALANCE MISMATCH user=%d mem=%s db=%s diff=%s",
 				userID, memBalance.StringFixed(8), dbBalance.StringFixed(8),
-				memBalance.Sub(dbBalance).StringFixed(8)))
+				diff.StringFixed(8)))
 		}
 	}
 	return issues
@@ -144,7 +161,7 @@ func (r *Reconciler) checkPositions() []string {
 			continue
 		}
 		memQty, _ := decimal.NewFromString(cp.Quantity)
-		if !memQty.Round(8).Equal(dbQty.Round(8)) {
+		if memQty.Sub(dbQty).Abs().GreaterThan(reconcileTolerance) {
 			issues = append(issues, fmt.Sprintf("POSITION QTY MISMATCH id=%d mem=%s db=%s", posID, memQty, dbQty))
 		}
 	}
@@ -174,26 +191,28 @@ func (r *Reconciler) checkZeroSum() []string {
 
 // sendAlert sends email notification for reconciliation issues.
 func (r *Reconciler) sendAlert(issues []string) {
-	const (
-		smtpHost = "smtp.gmail.com"
-		smtpPort = "587"
-		smtpUser = "shore.cloud@gmail.com"
-		smtpPass = "bwcn ljgx lqsq uomj"
-		alertTo  = "652732310@qq.com"
-	)
+	a := r.alert
+	if a.SMTPHost == "" || a.SMTPUser == "" || a.SMTPPass == "" || a.To == "" {
+		log.Printf("[Reconcile] alert email not configured; skipping (%d issues logged above)", len(issues))
+		return
+	}
+	port := a.SMTPPort
+	if port == "" {
+		port = "587"
+	}
 
 	subject := fmt.Sprintf("LearnFuture Reconcile ALERT: %d issues", len(issues))
 	body := fmt.Sprintf("Daily reconciliation found %d discrepancies:\n\n%s\n\nTime: %s",
 		len(issues), strings.Join(issues, "\n"), time.Now().Format(time.RFC3339))
 
 	msg := fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: %s\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n%s",
-		smtpUser, alertTo, subject, body)
+		a.SMTPUser, a.To, subject, body)
 
-	auth := smtp.PlainAuth("", smtpUser, smtpPass, smtpHost)
-	err := smtp.SendMail(smtpHost+":"+smtpPort, auth, smtpUser, []string{alertTo}, []byte(msg))
+	auth := smtp.PlainAuth("", a.SMTPUser, a.SMTPPass, a.SMTPHost)
+	err := smtp.SendMail(a.SMTPHost+":"+port, auth, a.SMTPUser, []string{a.To}, []byte(msg))
 	if err != nil {
 		log.Printf("[Reconcile] failed to send alert email: %v", err)
 	} else {
-		log.Printf("[Reconcile] alert email sent to %s", alertTo)
+		log.Printf("[Reconcile] alert email sent to %s", a.To)
 	}
 }

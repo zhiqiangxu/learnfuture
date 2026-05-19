@@ -293,7 +293,13 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		FeeCalculator:    feeCalculator,
 		OrderBook:        ob,
 		MarketMakerBot:   mmBot,
-		Reconciler:       reconcile.New(db, tradingEngine.GetMemAccounts(), positionCache),
+		Reconciler: reconcile.New(db, tradingEngine.GetMemAccounts(), positionCache, reconcile.AlertConfig{
+			SMTPHost: c.Alert.SMTPHost,
+			SMTPPort: c.Alert.SMTPPort,
+			SMTPUser: c.Alert.SMTPUser,
+			SMTPPass: c.Alert.SMTPPass,
+			To:       c.Alert.To,
+		}),
 		Hub:              hub,
 	}
 }
