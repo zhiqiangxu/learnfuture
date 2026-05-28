@@ -319,7 +319,6 @@ func (e *Engine) ClosePosition(positionID, userID int64, closeReason int, closeQ
 	if !ok || cp.UserID != userID {
 		return nil, ErrPositionNotFound
 	}
-	// CAS to prevent concurrent close — only one caller can proceed
 	if !e.positionCache.TrySetState(positionID, cache.PosStateClosing) {
 		return nil, ErrPositionClosing
 	}
@@ -330,29 +329,13 @@ func (e *Engine) ClosePosition(positionID, userID int64, closeReason int, closeQ
 		return nil, ErrInvalidCloseQuantity
 	}
 
-	actualQty := pos.Quantity
-	if !closeQty.IsZero() { actualQty = closeQty }
-
-	orderID := e.book.NextOrderID()
-	obTrades, _ := e.book.PlaceMarket(&orderbook.Order{
-		ID: orderID, UserID: userID, Side: -pos.Side, Quantity: actualQty,
-	})
-	if len(obTrades) == 0 {
-		e.positionCache.Update(positionID, func(p *cache.CachedPosition) { p.State.Store(cache.PosStateActive) })
-		return nil, ErrNoLiquidity
-	}
-
-	e.positionCache.Update(positionID, func(p *cache.CachedPosition) { p.State.Store(cache.PosStateActive) })
-
-	avgPrice, totalQty := clearing.CalcVWAP(obTrades)
-	e.submitOrder(orderID, userID, -pos.Side, model.OrderTypeMarket, pos.Leverage, nil, totalQty, decimal.Zero, avgPrice, nil, nil, model.OrderStatusFilled)
-	takerResults := e.ProcessTrades(obTrades, userID, -pos.Side, pos.Leverage, orderID)
-	return e.buildCloseResult(takerResults, pos)
+	qty := pos.Quantity
+	if !closeQty.IsZero() { qty = closeQty }
+	return e.executeClose(positionID, pos, qty)
 }
 
-// ============================================================
-// ClosePositionInternal (risk engine auto-close)
-// ============================================================
+// ClosePositionInternal is called by the risk engine (TP/SL/ForceTP).
+// Liquidation and ADL bypass orderbook and should not use this function.
 func (e *Engine) ClosePositionInternal(positionID int64, closePrice decimal.Decimal, closeReason int) (*CloseResult, error) {
 	if closeReason == model.CloseReasonLiquidation || closeReason == model.CloseReasonADL {
 		return nil, fmt.Errorf("ClosePositionInternal called with reason=%d, should use TakeOver/UpdatePosition", closeReason)
@@ -374,18 +357,23 @@ func (e *Engine) ClosePositionInternal(positionID int64, closePrice decimal.Deci
 		return nil, ErrPositionNotFound
 	}
 	pos := cachedToModel(cp)
+	return e.executeClose(positionID, pos, pos.Quantity)
+}
 
+// executeClose is the shared close logic: place reverse market order → process trades.
+// State must already be set to Closing/ForceTPing by the caller.
+func (e *Engine) executeClose(positionID int64, pos *model.Position, qty decimal.Decimal) (*CloseResult, error) {
 	orderID := e.book.NextOrderID()
 	obTrades, _ := e.book.PlaceMarket(&orderbook.Order{
-		ID: orderID, UserID: pos.UserID, Side: -pos.Side, Quantity: pos.Quantity,
+		ID: orderID, UserID: pos.UserID, Side: -pos.Side, Quantity: qty,
 	})
 	if len(obTrades) == 0 {
 		e.positionCache.Update(positionID, func(p *cache.CachedPosition) { p.State.Store(cache.PosStateActive) })
 		return nil, ErrNoLiquidity
 	}
 
-	e.positionCache.Update(positionID, func(p *cache.CachedPosition) { p.State.Store(cache.PosStateActive) })
-
+	// State stays Closing — FindOpposite can match it, TakeOver will skip it.
+	// handleReduce will set state back to Active (partial close) or remove (full close).
 	avgPrice, totalQty := clearing.CalcVWAP(obTrades)
 	e.submitOrder(orderID, pos.UserID, -pos.Side, model.OrderTypeMarket, pos.Leverage, nil, totalQty, decimal.Zero, avgPrice, nil, nil, model.OrderStatusFilled)
 	takerResults := e.ProcessTrades(obTrades, pos.UserID, -pos.Side, pos.Leverage, orderID)

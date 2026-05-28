@@ -43,8 +43,8 @@ func (e *Engine) UpdatePosition(userID int64, tradeSide int, qty, price decimal.
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	opposite := e.positionCache.FindByUserSide(userID, -tradeSide)
-	sameDir := e.positionCache.FindByUserSide(userID, tradeSide)
+	opposite := e.positionCache.FindOpposite(userID, tradeSide)
+	sameDir := e.positionCache.FindSameDir(userID, tradeSide)
 
 	if opposite != nil {
 		return e.handleReduce(userID, opposite, tradeSide, qty, price, leverage, closeReason, orderID)

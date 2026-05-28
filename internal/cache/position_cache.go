@@ -99,9 +99,26 @@ func (c *PositionCache) GetByUser(userID int64) []*CachedPosition {
 	return result
 }
 
-// FindByUserSideSymbol finds an existing active position for the same user+side.
-// Used for position merging (#2): same direction orders merge into one position.
-func (c *PositionCache) FindByUserSide(userID int64, side int) *CachedPosition {
+// FindOpposite finds a position opposite to tradeSide (for reduce/close).
+// Matches Active, Closing, and ForceTPing states so that a close operation
+// in progress can still be found by ProcessTrades → handleReduce.
+func (c *PositionCache) FindOpposite(userID int64, tradeSide int) *CachedPosition {
+	oppositeSide := -tradeSide
+	positions := c.GetByUser(userID)
+	for _, p := range positions {
+		if p.Side == oppositeSide {
+			s := p.State.Load()
+			if s == PosStateActive || s == PosStateClosing || s == PosStateForceTPing {
+				return p
+			}
+		}
+	}
+	return nil
+}
+
+// FindSameDir finds a position to increase (merge). Only matches Active state —
+// never add to a position that is being closed.
+func (c *PositionCache) FindSameDir(userID int64, side int) *CachedPosition {
 	positions := c.GetByUser(userID)
 	for _, p := range positions {
 		if p.Side == side && p.State.Load() == PosStateActive {
